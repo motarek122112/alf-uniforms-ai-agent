@@ -1,8 +1,8 @@
-# ALF Uniforms AI Agent Backend V4 — Human Bilingual Sales Concierge
+# ALF Uniforms AI Agent Backend V5 — Human Bilingual Sales Concierge
 
 FastAPI + Groq backend for the ALF Shopify assistant.
 
-## What changed in V4
+## What changed in V5
 
 - Arabic/English conversation language is persistent and controlled by the storefront.
 - A number, phone, email, date, size code, product name, or short value such as `Printing`, `call`, or `WhatsApp` does not switch the conversation language.
@@ -37,3 +37,9 @@ Replace the backend files in the existing GitHub repository with the files in th
 - `POST /api/chat`
 
 The backend is stateless. The Shopify theme keeps the conversation, selected language, structured enquiry draft, and resolved-field state in the browser and sends the current state with every AI request.
+
+
+## V5 reliability fix
+- Accepts Shopify/custom HTTPS storefront origins to avoid silent CORS fallback.
+- Retries Groq without `response_format` if a model rejects JSON mode.
+- Returns a useful bilingual server-side fail-safe instead of HTTP 502/503 during temporary provider problems.

@@ -79,6 +79,7 @@ CURRENT WEBSITE STATE contains conversation_language. Follow it for your reply.
 - The storefront decides when a language switch is clear and sends the resulting conversation_language. Respect it consistently until it changes again.
 - When Arabic is active, even if the visitor answers with an English field value such as "Printing" or "call", acknowledge and continue in Arabic.
 - When English is active, do the equivalent in English.
+- Understand common Gulf/Kuwaiti Arabic naturally. In this website context, "زي" can mean a work uniform, and "أبي/ابي" means "I want". So "أبي زي" is a normal request for a uniform, not an unrelated topic or a company name.
 
 BUSINESS RULES
 - ALF sells custom uniforms for organizations and teams in Kuwait.
@@ -250,13 +251,21 @@ Return ONLY one valid JSON object:
 Keep actions to 0–3 genuinely useful choices. Never put quote-update in auto_action. Do not output markdown.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.3.0")
+app = FastAPI(title=APP_NAME, version="1.4.0")
+# Shopify can serve the same uploaded theme from the myshopify domain, a custom
+# storefront domain, and preview/editor hosts. CORS is not authentication here;
+# the API is already public, while the Groq key remains server-side. Allow HTTPS
+# storefront origins so a domain change never silently forces the theme into its
+# local fallback mode.
+ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX", r"https://.*").strip() or r"https://.*"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ORIGIN_REGEX,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Accept"],
 )
 
 # Lightweight abuse protection. Render instances are ephemeral, so this is intentionally simple.
@@ -496,6 +505,12 @@ def _merge_model_draft(base: Any, update: Any, latest_user_text: str) -> dict[st
             if company in {person_name.lower(), raw} or raw.endswith(company):
                 incoming.pop("company", None)
 
+    # Phrases such as "أبي زي" / "I need a uniform" are user intent, not a
+    # company name. A model extraction mistake here would poison the entire
+    # strict collector, so reject that one known bad mapping deterministically.
+    if "company" not in base_clean and _looks_like_uniform_intent(latest_user_text):
+        incoming.pop("company", None)
+
     return _merge_quote_patch(base_clean, incoming)
 
 
@@ -606,6 +621,107 @@ def _clean_context(raw: Any, fallback: AgentContext) -> dict[str, Any]:
     return {"lastUniform": last_uniform, "industry": industry, "quantity": quantity}
 
 
+
+
+def _looks_like_uniform_intent(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if not t:
+        return False
+    if t in {"زي", "يونيفورم", "uniform", "uniforms"}:
+        return True
+    return bool(re.search(
+        r"(?:^|\s)(?:ابي|أبي|ابغى|أبغى|اريد|أريد|عايز|محتاج|احتاج|أحتاج|need|want)\s+(?:لي\s+)?(?:زي|يونيفورم|uniform|uniforms|ملابس\s+عمل)(?:\s|$)",
+        t,
+        flags=re.I,
+    ))
+
+
+def _is_greeting(text: str) -> bool:
+    t = re.sub(r"[!؟?.,،]+$", "", (text or "").strip().lower())
+    return t in {"هلا", "هلا والله", "مرحبا", "مرحبًا", "السلام عليكم", "اهلين", "أهلين", "hi", "hello", "hey"}
+
+
+def _asks_uniform_types(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return bool(re.search(r"(?:الأنواع|الانواع|انواع|أنواع|المتاح|متوفر|متاحة|available|categories|types)", t, flags=re.I))
+
+
+def _natural_local_reply(payload: "ChatRequest", reason: str = "") -> dict[str, Any]:
+    """Useful fail-safe response if the model/provider is unavailable.
+
+    The storefront also has a local fallback, but returning 200 here keeps the
+    conversation state, language and collector synchronized instead of making a
+    temporary provider/CORS issue look like a dead chatbot.
+    """
+    latest = payload.messages[-1].content if payload.messages else ""
+    ar = payload.conversation_language == "ar"
+    draft = _merge_model_draft(payload.draft_quote, {}, latest)
+    field_status = _clean_field_status({}, draft, payload.collection.resolved)
+
+    if _is_greeting(latest):
+        reply = (
+            "هلا 👋 حياك الله. إذا تبي نجهز يونيفورم لفريقك، قل لي وش تحتاج وأنا أمشي معك بشكل طبيعي."
+            if ar else
+            "Hi 👋 Welcome. Tell me what kind of uniforms your team needs and I’ll work through it with you naturally."
+        )
+    elif _looks_like_uniform_intent(latest):
+        if ar:
+            reply = "أكيد 👌 نقدر نجهز لك الزي المناسب. باسم أي شركة أو جهة بيكون الطلب؟"
+        else:
+            reply = "Absolutely. I can help you build the right uniform requirement. What company or organization is the order for?"
+    elif _asks_uniform_types(latest):
+        if ar:
+            reply = "عندنا بولو وتي شيرت، زي شيف ومرايل، قبعات وإكسسوارات شيف، كارجو وملابس عمل، زي أمني، وملابس فرق الفعاليات والترويج. قل لي استخدام الفريق وأرشح لك الأقرب."
+        else:
+            reply = "ALF covers Polo Shirts & T-Shirts, Chef Uniforms & Aprons, Chef Caps & Accessories, Cargo Pants & Workwear, Security Uniforms, and Event & Promo Team Apparel. Tell me the team use and I’ll narrow it down."
+    else:
+        current = (payload.collection.current_field or "").strip()
+        ar_questions = {
+            "company": "باسم أي شركة أو جهة بيكون الطلب؟",
+            "industry": "وش مجال نشاطكم؟",
+            "project": "الزي هذا لأي فريق أو استخدام تحديدًا؟",
+            "uniforms": "وش نوع الزي اللي تحتاجه، وكم قطعة تقريبًا؟",
+            "color": "وش اللون المفضل عندكم؟",
+            "male_count": "كم عدد الرجال تقريبًا ضمن الفريق؟",
+            "female_count": "وكم عدد السيدات تقريبًا؟",
+            "sizes": "هل عندك توزيع المقاسات؟ وإذا مو معروف حاليًا عادي قل لي.",
+            "deadline": "متى تحتاجون الطلب يكون جاهز؟",
+            "branding": "تفضلون البراندنج تطريز أو طباعة، أو نخلي ALF يرشح الأنسب؟",
+            "logo_placement": "وين تفضلون مكان اللوجو؟",
+            "logo_ready": "هل ملف اللوجو جاهز للإرسال؟",
+            "branding_notes": "في أي تفاصيل إضافية تخص البراندنج؟",
+            "name": "وش اسم الشخص المناسب للتواصل؟",
+            "phone": "وش رقم الواتساب أو الهاتف المناسب؟",
+            "email": "وش البريد الإلكتروني المناسب للطلب؟",
+            "area": "في أي منطقة بالكويت بيكون النشاط أو التسليم؟",
+            "followup": "تفضلون المتابعة واتساب، مكالمة، أو اجتماع؟",
+            "contact_time": "وش أنسب وقت للتواصل معك؟",
+            "notes": "في أي ملاحظة أخيرة تحب تضيفها للطلب؟",
+        }
+        en_questions = {
+            "company": "What company or organization is the order for?",
+            "industry": "What industry is the team in?",
+            "project": "What team or use is the uniform for?",
+            "uniforms": "Which uniform type do you need, and roughly how many pieces?",
+            "color": "What color do you prefer?",
+        }
+        if ar:
+            reply = ar_questions.get(current) or "أنا معك. قل لي اللي تحتاجه بخصوص الزي أو الطلب، ونكمل من هناك."
+        else:
+            reply = en_questions.get(current) or "I’m with you. Tell me what you need for the uniforms or quotation and we’ll continue from there."
+
+    return {
+        "reply": reply,
+        "actions": [],
+        "auto_action": None,
+        "context": _clean_context({}, payload.context),
+        "draft_quote": draft,
+        "field_status": field_status,
+        "conversation_language": payload.conversation_language,
+        "model": MODEL,
+        "provider": "local-failsafe",
+    }
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {"service": APP_NAME, "status": "online", "model": MODEL}
@@ -620,7 +736,7 @@ def health() -> dict[str, str]:
 def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     _rate_limit(request)
     if not GROQ_API_KEY:
-        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured on the server.")
+        return _natural_local_reply(payload, reason="missing_api_key")
 
     enquiry_names = [item.name for item in payload.enquiry if item.name in UNIFORMS]
     runtime_context = {
@@ -644,21 +760,31 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     messages.extend({"role": m.role, "content": m.content} for m in payload.messages[-24:])
 
     try:
-        client = Groq(api_key=GROQ_API_KEY)
-        completion = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            temperature=0.25,
-            max_completion_tokens=900,
-            response_format={"type": "json_object"},
-        )
+        client = Groq(api_key=GROQ_API_KEY, timeout=22.0, max_retries=1)
+        try:
+            completion = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                temperature=0.25,
+                max_completion_tokens=900,
+                response_format={"type": "json_object"},
+            )
+        except Exception:
+            # Some Groq models/accounts temporarily reject response_format even
+            # when normal chat completion is healthy. Retry once without it and
+            # parse the JSON object from the text ourselves.
+            completion = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                temperature=0.25,
+                max_completion_tokens=900,
+            )
         content = completion.choices[0].message.content or ""
         data = _safe_json(content)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        # Do not leak keys or provider internals to the storefront.
-        raise HTTPException(status_code=502, detail="The AI service is temporarily unavailable.") from exc
+    except Exception:
+        # Keep the storefront conversational even during a temporary provider
+        # outage. The next visitor message will try Groq again automatically.
+        return _natural_local_reply(payload, reason="provider_unavailable")
 
     reply = str(data.get("reply", "")).strip()[:3000]
     if not reply:
