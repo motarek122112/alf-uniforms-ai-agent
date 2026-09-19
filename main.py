@@ -30,6 +30,8 @@ UNIFORMS = [
     "Event & Promo Team Apparel",
 ]
 
+CUSTOM_UNIFORM = "Custom Uniform"
+
 ROUTES = {
     "Polo Shirts & T-Shirts": "/pages/polo-t-shirts",
     "Chef Uniforms & Aprons": "/pages/chef-uniforms",
@@ -37,6 +39,7 @@ ROUTES = {
     "Cargo Pants & Workwear": "/pages/workwear",
     "Security Uniforms": "/pages/security-uniforms",
     "Event & Promo Team Apparel": "/pages/event-uniforms",
+    CUSTOM_UNIFORM: "/pages/custom-uniforms",
 }
 
 STATIC_ROUTES = {
@@ -61,6 +64,7 @@ PRIORITIES
 1) Answer the visitor's latest message naturally and helpfully.
 2) Help them choose, compare, understand, and feel supported.
 3) Quietly build a complete business enquiry in the background. Never let the checklist override the conversation.
+4) Treat the user's corrections and clarifications as authoritative. If they say ground crew after pilots, update the team context instead of clinging to the old interpretation.
 
 LANGUAGE
 - Follow CURRENT WEBSITE STATE.conversation_language exactly: ar = natural clear Arabic suitable for Kuwait; en = natural professional English.
@@ -74,6 +78,8 @@ HUMAN CONVERSATION
 - If they ask “اقترح انت / رشح لي / what do you suggest”, make a concrete recommendation from known context, explain why, and mention an alternative when useful. Do not repeat the pending field question.
 - Never mention 1/20, steps, progress, required order, collector, form fields, or internal rules.
 - Do not repeat a question they already answered. Capture volunteered information even if it is not the field you expected.
+- Never force the pending field when the visitor is asking for options, a recommendation, a clarification, or simply correcting you. Answer that turn first.
+- If they give several facts in one message, capture all of them at once (for example total quantity plus male/female split).
 - “اسمي محمد” = contact name. “اسم شركتي الأحمر / الشركة اسمها الأحمر / اسمها الأحمر” = company name.
 - If their request is still vague, ask ONE helpful conversational question, not a questionnaire.
 - Only decline when the visitor clearly asks for factual help unrelated to ALF, uniforms, business ordering, the website, or normal small talk.
@@ -83,7 +89,7 @@ ALF FACTS
 - Minimum order starts at 12 pieces per uniform type.
 - Never invent price, delivery promise, stock, client names, project proof, fabric specs, or production time.
 - Available site categories: {json.dumps(UNIFORMS, ensure_ascii=False)}.
-- If a requested role has no named ready category (for example a formal airline pilot uniform), say that clearly and suggest a custom-uniform enquiry rather than pretending a category exists.
+- If a requested role has no named ready category (for example a formal airline pilot uniform), say that clearly and use Custom Uniform as the enquiry item rather than leaving the uniform field permanently unresolved.
 - General recommendation guide: kitchen/restaurant -> Chef Uniforms & Aprons; office/reception/sales -> Polo Shirts & T-Shirts; active workers/warehouse/maintenance -> Cargo Pants & Workwear; security -> Security Uniforms; events/promo -> Event & Promo Team Apparel.
 
 BACKGROUND ENQUIRY
@@ -106,7 +112,7 @@ Return ONLY one JSON object with keys: reply, actions, auto_action, context, dra
 No markdown outside reply text.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.8.0")
+app = FastAPI(title=APP_NAME, version="1.9.0")
 # Shopify can serve the same uploaded theme from the myshopify domain, a custom
 # storefront domain, and preview/editor hosts. CORS is not authentication here;
 # the API is already public, while the Groq key remains server-side. Allow HTTPS
@@ -210,7 +216,7 @@ def _clean_quote_patch(raw: Any) -> dict[str, Any]:
         return {}
 
     patch: dict[str, Any] = {}
-    quote_uniforms = set(UNIFORMS + ["Corporate Shirts", "Other"])
+    quote_uniforms = set(UNIFORMS + [CUSTOM_UNIFORM, "Corporate Shirts", "Other"])
 
     uniforms = []
     if isinstance(raw.get("uniforms"), list):
@@ -331,6 +337,7 @@ def _language_only_message(text: str) -> bool:
 def _extract_person_name(text: str) -> str:
     t = re.sub(r"\s+", " ", (text or "").strip())
     patterns = [
+        r"^(?:هلا+|مرحبا|مرحبًا|أهلين|اهلين)\s+(?:أنا|انا)\s+([\w\u0600-\u06FF .'-]{2,80})$",
         r"^(?:أنا\s+)?اسمي\s+(.+)$",
         r"^(?:أنا|انا)\s+(.+?)\s+(?:وعندي|عندي|ولدي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)\b",
         r"^my\s+name\s+is\s+(.+)$",
@@ -344,6 +351,18 @@ def _extract_person_name(text: str) -> str:
     return ""
 
 
+def _trim_company_tail(value: str) -> str:
+    value = re.sub(r"\s+", " ", (value or "").strip(" .,-"))
+    # Stop when the same sentence moves from naming the company into the uniform request.
+    parts = re.split(
+        r"\s+(?=(?:وابي|وأبي|وابغى|وأبغى|وعايز|ومحتاج|واحتاج|وأحتاج|واريد|وأريد|ابي|أبي|ابغى|أبغى|عايز|محتاج|احتاج|أحتاج|اريد|أريد|need|want)\b)",
+        value,
+        maxsplit=1,
+        flags=re.I,
+    )
+    return parts[0].strip(" .,-")[:180]
+
+
 def _extract_company_name(text: str) -> str:
     t = re.sub(r"\s+", " ", (text or "").strip())
     patterns = [
@@ -355,12 +374,11 @@ def _extract_company_name(text: str) -> str:
     for pattern in patterns:
         m = re.match(pattern, t, flags=re.I)
         if m:
-            value = re.sub(r"\s+", " ", m.group(1)).strip(" .,-")
-            value = re.sub(r"^هي\s+", "", value, flags=re.I)
+            value = re.sub(r"^هي\s+", "", m.group(1), flags=re.I)
+            value = _trim_company_tail(value)
             if value:
-                return value[:180]
+                return value
     return ""
-
 
 def _normalize_industry_text(text: str) -> str:
     t = (text or "").strip().lower()
@@ -385,9 +403,17 @@ def _normalize_industry_text(text: str) -> str:
 
 def _extract_project_hint(text: str) -> str:
     t = re.sub(r"\s+", " ", (text or "").strip())
-    # Explicit use/team wording first.
+    low = t.lower()
+    # Explicit corrections should override old context.
+    if re.search(r"(?:طاقم\s*)?أرضي|(?:طاقم\s*)?ارضي|ground\s*crew|ground\s*staff", low, flags=re.I):
+        return "طاقم أرضي بالمطار" if re.search(r"[\u0600-\u06FF]", t) else "Airport ground crew"
+    if re.search(r"طيارين?\s*(?:فعلي|فعليا|فعليًا|رسمي|رسميين)|formal\s+pilots?|actual\s+pilots?", low, flags=re.I):
+        return "طيارين رسميين" if re.search(r"[\u0600-\u06FF]", t) else "Formal pilots"
+    if re.search(r"(?:يونيفورمات?|يونيفرمات?|ازياء|أزياء|زي)\s+(?:ل)?(?:طيارين|طيار)|(?:فريق|الفريق)\s+(?:بيشتغل|يشتغل|هو)\s+(?:طيارين|طيار)", t, flags=re.I):
+        return "طيارين" if re.search(r"[\u0600-\u06FF]", t) else "Pilots"
     patterns = [
         r"(?:ل|لل)\s*(طيارين|الطيارين|عمال|العمال|موظفين|الموظفين|شيفات|الشيفات|امن|أمن|حراس|فريق مبيعات|استقبال)(?:\s|$)",
+        r"(?:فريق|الفريق)\s+(?:بيشتغل|يشتغل|هو)\s+(طيارين|عمال|موظفين|شيفات|امن|أمن|حراس)(?:\s|$)",
         r"(?:for|for my|for our)\s+([A-Za-z][A-Za-z \/&-]{2,80})(?:\?|$)",
     ]
     for pattern in patterns:
@@ -397,44 +423,117 @@ def _extract_project_hint(text: str) -> str:
             return value[:160]
     return ""
 
-def _merge_model_draft(base: Any, update: Any, latest_user_text: str, current_field: str = "") -> dict[str, Any]:
-    """Merge model extraction with deterministic guards for known failure modes."""
-    base_clean = _clean_quote_patch(base)
+def _extract_team_counts(text: str) -> dict[str, int]:
+    t = re.sub(r"[,،]", " ", (text or "").lower())
+    out: dict[str, int] = {}
+    male_patterns = [r"(\d{1,5})\s*(?:ذكر|ذكور|رجل|رجال|male|men)", r"(?:ذكر|ذكور|رجل|رجال|male|men)\s*(\d{1,5})"]
+    female_patterns = [r"(\d{1,5})\s*(?:انثى|أنثى|انثي|أنثي|إناث|نساء|female|women)", r"(?:انثى|أنثى|انثي|أنثي|إناث|نساء|female|women)\s*(\d{1,5})"]
+    for pat in male_patterns:
+        m = re.search(pat, t, flags=re.I)
+        if m:
+            out["male_count"] = int(m.group(1)); break
+    for pat in female_patterns:
+        m = re.search(pat, t, flags=re.I)
+        if m:
+            out["female_count"] = int(m.group(1)); break
+    return out
+
+
+def _extract_total_quantity(text: str) -> int:
+    t = (text or "").strip().lower()
+    explicit = re.search(r"(?:اجمالي|إجمالي|المجموع|total|quantity|كمية)\s*[:\-]?\s*(\d{1,6})", t, flags=re.I)
+    if explicit:
+        return int(explicit.group(1))
+    piece = re.search(r"\b(\d{2,6})\s*(?:قطعة|قطعه|قطع|pcs?|pieces?)\b", t, flags=re.I)
+    if piece:
+        return int(piece.group(1))
+    counts = _extract_team_counts(text)
+    nums = [int(x) for x in re.findall(r"\b\d{1,6}\b", t)]
+    if len(nums) >= 3 and counts.get("male_count") is not None and counts.get("female_count") is not None:
+        expected = counts["male_count"] + counts["female_count"]
+        if nums[0] == expected:
+            return nums[0]
+    return 0
+
+
+def _explicit_custom_uniform(text: str, project: str = "") -> bool:
+    t = f"{text or ''} {project or ''}".lower()
+    return bool(re.search(r"(?:زي|يونيفورم|uniform)\s*(?:ل)?\s*(?:طيار|طيارين)|pilot\s+uniform|formal\s+pilot", t, flags=re.I))
+
+
+def _semantic_capture(base: Any, latest_user_text: str, current_field: str = "") -> dict[str, Any]:
+    draft = _clean_quote_patch(base)
     if _language_only_message(latest_user_text):
-        # A language-control message is never enquiry data.
+        return draft
+
+    person_name = _extract_person_name(latest_user_text)
+    if person_name:
+        draft["name"] = person_name
+
+    company_name = _extract_company_name(latest_user_text)
+    if company_name:
+        explicit_rename = bool(re.search(r"اسم\s+شركتي|اسم\s+(?:الشركة|الشركه)|company\s+name|business\s+name", latest_user_text, flags=re.I))
+        if "company" not in draft or explicit_rename:
+            draft["company"] = company_name
+
+    # Industry can be volunteered at any time; it must not depend on current_field.
+    industry = _normalize_industry_text(latest_user_text)
+    if industry and ("industry" not in draft or current_field == "industry"):
+        draft["industry"] = industry
+
+    project_hint = _extract_project_hint(latest_user_text)
+    if project_hint:
+        # Ground/pilot clarifications are authoritative corrections, not merely hints.
+        if re.search(r"أرضي|ارضي|ground|طيارين?\s*(?:فعلي|رسمي)|formal\s+pilot|actual\s+pilot|(?:فريق|الفريق).*طيارين|(?:يونيفورمات?|يونيفرمات?|ازياء|أزياء|زي)\s+(?:ل)?طيار", latest_user_text, flags=re.I) or "project" not in draft:
+            draft["project"] = project_hint
+        if re.search(r"أرضي|ارضي|ground", latest_user_text, flags=re.I):
+            kept = [x for x in list(draft.get("uniforms") or []) if x.get("name") != CUSTOM_UNIFORM]
+            if kept:
+                draft["uniforms"] = kept
+            else:
+                draft.pop("uniforms", None)
+
+    for key, value in _extract_team_counts(latest_user_text).items():
+        draft[key] = value
+
+    uniforms = list(draft.get("uniforms") or [])
+    qty = _extract_total_quantity(latest_user_text)
+    project_text = str(draft.get("project", "") or "")
+    if _explicit_custom_uniform(latest_user_text, project_text) or (qty >= 12 and not uniforms and re.search(r"طيار|pilot", project_text, flags=re.I)):
+        found = next((x for x in uniforms if x.get("name") == CUSTOM_UNIFORM), None)
+        if not found:
+            found = {"name": CUSTOM_UNIFORM, "qty": 0}
+            uniforms.append(found)
+        if qty >= 12:
+            found["qty"] = qty
+        draft["uniforms"] = uniforms
+    else:
+        pending = [x for x in uniforms if int(x.get("qty", 0) or 0) == 0]
+        if qty >= 12 and len(pending) == 1:
+            pending[0]["qty"] = qty
+            draft["uniforms"] = uniforms
+
+    return _clean_quote_patch(draft)
+
+
+def _merge_model_draft(base: Any, update: Any, latest_user_text: str, current_field: str = "") -> dict[str, Any]:
+    """Merge deterministic semantic capture first, then safe model extraction."""
+    base_clean = _semantic_capture(base, latest_user_text, current_field)
+    if _language_only_message(latest_user_text):
         return base_clean
 
     incoming = _clean_quote_patch(update)
-    person_name = _extract_person_name(latest_user_text)
-    company_name = _extract_company_name(latest_user_text)
-    project_hint = _extract_project_hint(latest_user_text)
-    if person_name:
-        incoming["name"] = person_name
-        if "company" not in base_clean and "company" in incoming:
-            company = str(incoming.get("company", "")).strip().lower()
-            raw = latest_user_text.strip().lower()
-            if company in {person_name.lower(), raw} or raw.endswith(company):
-                incoming.pop("company", None)
-    if company_name:
-        explicit_rename = bool(re.search(r"اسم\s+شركتي|اسم\s+(?:الشركة|الشركه)|company\s+name|business\s+name", latest_user_text, flags=re.I))
-        if "company" not in base_clean or explicit_rename:
-            incoming["company"] = company_name
-    if project_hint and "project" not in base_clean and not str(incoming.get("project", "") or "").strip():
-        incoming["project"] = project_hint
+    # Deterministic captures from the current user turn are authoritative.
+    merged = _merge_quote_patch(base_clean, incoming)
+    protected = _semantic_capture(base_clean, latest_user_text, current_field)
+    merged = _merge_quote_patch(merged, protected)
 
-    if current_field == "industry" and "industry" not in base_clean:
-        normalized_industry = _normalize_industry_text(latest_user_text)
-        if normalized_industry:
-            incoming["industry"] = normalized_industry
-
-    # Phrases such as "أبي زي" / "I need a uniform" are user intent, not a
-    # company name. A model extraction mistake here would poison the entire
-    # strict collector, so reject that one known bad mapping deterministically.
     if "company" not in base_clean and _looks_like_uniform_intent(latest_user_text):
-        incoming.pop("company", None)
-
-    return _merge_quote_patch(base_clean, incoming)
-
+        # Never let generic intent like "أبي زي" become the company name.
+        candidate = str(merged.get("company", "") or "").lower()
+        if candidate and candidate in latest_user_text.strip().lower():
+            merged.pop("company", None)
+    return merged
 
 COLLECTION_FIELD_IDS = (
     "company", "industry", "project", "uniforms", "color", "male_count",
@@ -442,7 +541,6 @@ COLLECTION_FIELD_IDS = (
     "logo_ready", "branding_notes", "name", "phone", "email", "area",
     "followup", "contact_time", "notes",
 )
-
 
 def _draft_has_field(draft: dict[str, Any], field_id: str) -> bool:
     if field_id == "uniforms":
@@ -532,8 +630,9 @@ def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
 def _clean_context(raw: Any, fallback: AgentContext) -> dict[str, Any]:
     raw = raw if isinstance(raw, dict) else {}
     last_uniform = str(raw.get("lastUniform", fallback.lastUniform) or "")
-    if last_uniform and last_uniform not in UNIFORMS:
-        last_uniform = fallback.lastUniform if fallback.lastUniform in UNIFORMS else ""
+    allowed_uniforms = set(UNIFORMS + [CUSTOM_UNIFORM])
+    if last_uniform and last_uniform not in allowed_uniforms:
+        last_uniform = fallback.lastUniform if fallback.lastUniform in allowed_uniforms else ""
     industry = str(raw.get("industry", fallback.industry) or "")[:120]
     try:
         quantity = int(raw.get("quantity", fallback.quantity) or 0)
@@ -582,136 +681,194 @@ def _is_casual_nudge(text: str) -> bool:
 
 def _local_recommendation(payload: "ChatRequest") -> tuple[str, list[dict[str, Any]]]:
     latest = payload.messages[-1].content if payload.messages else ""
-    draft = payload.draft_quote if isinstance(payload.draft_quote, dict) else {}
+    draft = _semantic_capture(payload.draft_quote, latest, payload.collection.current_field)
     project = str(draft.get("project", "") or "")
     industry = str(draft.get("industry", "") or "")
     combined = f"{latest} {project} {industry}".lower()
     ar = payload.conversation_language == "ar"
 
-    if re.search(r"(طيار|طيارين|pilot|pilots|airline|aviation)", combined, flags=re.I):
+    # Ground crew is intentionally checked before pilot/aviation. A visitor may
+    # start by saying pilots and then clarify "أرضي"; the clarification wins.
+    if re.search(r"أرضي|ارضي|ground\s*crew|ground\s*staff", combined, flags=re.I):
         if ar:
             return (
-                "لو تقصد طيارين رسميين، ما راح أقول لك إن في فئة جاهزة باسم طيارين وهي مو موجودة في الكتالوج الحالي. الأفضل نمشيها كـ Custom Uniform ونحدد الستايل الرسمي والهوية. وإذا المقصود طاقم أرضي بالمطار فممكن نختار Workwear أو Polo حسب طبيعة دورهم. تقصد الطيارين أنفسهم ولا الطاقم الأرضي؟",
-                [{"label":"عرض الزي المخصص","type":"navigate","value":"/pages/custom-uniforms"}],
-            )
-        return (
-            "If you mean formal pilots, I would treat it as a custom-uniform request because the current catalog does not list a dedicated pilot category. If you mean airport ground crew, Workwear or Polos may fit depending on the role. Do you mean the pilots themselves or ground crew?",
-            [{"label":"View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}],
-        )
-
-    if re.search(r"(عمال|عامل|مخزن|تحميل|تشغيل|صيانة|لوجست|warehouse|worker|workers|labou?r|operations|maintenance|logistics)", combined, flags=re.I):
-        if ar:
-            return (
-                "بما إن الزي للعمال، أنا أميل أبدأ معك بـ Cargo Pants & Workwear لأنه عملي أكثر للحركة والشغل اليومي. إذا العمال أغلب وقتهم قدام العملاء أو داخل معرض/محل، البولو والتي‑شيرت ممكن يطلع أرتب. لو شغلهم تشغيل وحركة، فالـWorkwear هو اختياري الأول. طبيعة شغلهم أقرب لأي واحد فيهم؟",
+                "للطاقم الأرضي عندك خيارين منطقيين أكثر من غيرهم: لو الشغل فيه حركة وتشغيل وتحميل فـ Cargo Pants & Workwear أنسب؛ ولو الفريق يتعامل مع المسافرين أو واقف في كاونترات وخدمة عملاء فالبولو أو التي‑شيرت يطلع أرتب. لو وصفت لي دورهم اليومي بجملة، أختار لك واحد منهم بشكل أدق.",
                 [
                     {"label":"عرض الـWorkwear","type":"navigate","value":"/pages/workwear"},
                     {"label":"عرض البولو والتي‑شيرت","type":"navigate","value":"/pages/polo-t-shirts"},
                 ],
             )
         return (
-            "For a general workers team, I’d start with Cargo Pants & Workwear because it suits active day-to-day work better. If they are mostly customer-facing retail staff, polos and T-shirts can look cleaner. If the role is operational, Workwear would be my first pick. Which setting is closer?",
+            "For airport ground crew, I’d narrow it to two sensible routes: Cargo Pants & Workwear for active operational roles, or Polos/T-shirts for customer-facing counters and service teams. Tell me what they do day to day and I’ll choose between them.",
             [
                 {"label":"View Workwear","type":"navigate","value":"/pages/workwear"},
                 {"label":"View Polo & T-Shirts","type":"navigate","value":"/pages/polo-t-shirts"},
             ],
         )
-    if re.search(r"(مطعم|كافيه|مطبخ|شيف|restaurant|cafe|kitchen|chef|hospitality)", combined, flags=re.I):
-        return (("لو الفريق مطعم أو مطبخ، أبدأ بزي الشيف والمرايل، ولو عندك فريق استقبال أو خدمة عملاء أضيف لهم بولو موحد." if ar else "For a restaurant or kitchen team, I’d start with Chef Uniforms & Aprons, with polos as a clean option for front-of-house staff."), [{"label":"عرض زي الشيف","type":"navigate","value":"/pages/chef-uniforms"}] if ar else [{"label":"View Chef Uniforms","type":"navigate","value":"/pages/chef-uniforms"}])
-    if re.search(r"(أمن|حراسة|security|guard)", combined, flags=re.I):
+
+    if re.search(r"طيار|طيارين|pilot|pilots|airline|aviation", combined, flags=re.I):
+        if ar:
+            return (
+                "لو المقصود الطيارين أنفسهم، الأفضل نمشيه كـ Custom Uniform لأن الموقع ما عنده فئة جاهزة باسم زي طيارين. نقدر نبني الطلب على الستايل الرسمي، اللون، الشعار والكمية، وبعدها فريق ALF يراجعه معك. إذا تبي، أبدأ معك بالشكل العام أو الكمية.",
+                [{"label":"عرض الزي المخصص","type":"navigate","value":"/pages/custom-uniforms"}],
+            )
+        return (
+            "For the pilots themselves, I’d treat it as a Custom Uniform requirement because the site does not list a ready pilot-uniform category. We can define the formal look, color, branding and quantity for ALF to review. We can start with the look or the quantity.",
+            [{"label":"View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}],
+        )
+
+    if re.search(r"عمال|عامل|مخزن|تحميل|تشغيل|صيانة|لوجست|warehouse|worker|workers|labou?r|operations|maintenance|logistics", combined, flags=re.I):
+        if ar:
+            return (
+                "بما إن الزي للعمال، أنا أميل أبدأ معك بـ Cargo Pants & Workwear لأنه عملي للحركة والشغل اليومي. لو الفريق قدام العملاء أكثر من التشغيل، البولو والتي‑شيرت يطلع أنظف. لو شغلهم تشغيل وحركة، فالـWorkwear هو اختياري الأول.",
+                [
+                    {"label":"عرض الـWorkwear","type":"navigate","value":"/pages/workwear"},
+                    {"label":"عرض البولو والتي‑شيرت","type":"navigate","value":"/pages/polo-t-shirts"},
+                ],
+            )
+        return (
+            "For a workers team, I’d start with Cargo Pants & Workwear for active day-to-day work. If they are mainly customer-facing, polos and T-shirts can look cleaner.",
+            [
+                {"label":"View Workwear","type":"navigate","value":"/pages/workwear"},
+                {"label":"View Polo & T-Shirts","type":"navigate","value":"/pages/polo-t-shirts"},
+            ],
+        )
+    if re.search(r"مطعم|كافيه|مطبخ|شيف|restaurant|cafe|kitchen|chef|hospitality", combined, flags=re.I):
+        return (("لو الفريق مطعم أو مطبخ، أبدأ بزي الشيف والمرايل، ولو عندك استقبال أو خدمة عملاء أضيف لهم بولو موحد." if ar else "For a restaurant or kitchen team, I’d start with Chef Uniforms & Aprons, with polos as a clean option for front-of-house staff."), [{"label":"عرض زي الشيف","type":"navigate","value":"/pages/chef-uniforms"}] if ar else [{"label":"View Chef Uniforms","type":"navigate","value":"/pages/chef-uniforms"}])
+    if re.search(r"أمن|حراسة|security|guard", combined, flags=re.I):
         return (("لو الفريق أمن أو حراسة، الزي الأمني هو الاختيار الطبيعي كبداية، وبعدها نضبط اللون والبراندنج حسب الجهة." if ar else "For a security team, Security Uniforms are the natural starting point, then we can tailor color and branding to the organization."), [{"label":"عرض الزي الأمني","type":"navigate","value":"/pages/security-uniforms"}] if ar else [{"label":"View Security Uniforms","type":"navigate","value":"/pages/security-uniforms"}])
-    if re.search(r"(فعالية|فعاليات|معرض|ترويج|event|promo|promotion|exhibition)", combined, flags=re.I):
+    if re.search(r"فعالية|فعاليات|معرض|ترويج|event|promo|promotion|exhibition", combined, flags=re.I):
         return (("للفعاليات والترويج، Event & Promo Team Apparel هو الأقرب، والبولو بديل ممتاز لو تبي شكل أبسط وأكثر رسميّة." if ar else "For events and promotional teams, Event & Promo Team Apparel is the closest match; polos are a good alternative for a cleaner corporate look."), [{"label":"عرض زي الفعاليات","type":"navigate","value":"/pages/event-uniforms"}] if ar else [{"label":"View Event Apparel","type":"navigate","value":"/pages/event-uniforms"}])
-    if re.search(r"(شركة|مكتب|استقبال|مبيعات|corporate|office|reception|sales)", combined, flags=re.I):
+    if re.search(r"شركة|مكتب|استقبال|مبيعات|corporate|office|reception|sales", combined, flags=re.I):
         return (("لفريق مكتب أو استقبال أو مبيعات، البولو والتي‑شيرت غالبًا أفضل بداية: شكله مرتب وسهل نطابقه مع ألوان وهوية الشركة." if ar else "For an office, reception or sales team, polos and T-shirts are usually the best starting point: clean, versatile and easy to match to the brand."), [{"label":"عرض البولو والتي‑شيرت","type":"navigate","value":"/pages/polo-t-shirts"}] if ar else [{"label":"View Polo & T-Shirts","type":"navigate","value":"/pages/polo-t-shirts"}])
 
-    return (("أكيد أرشح لك، بس ما أبي أعطيك اختيار عشوائي. طبيعة شغل الفريق أكثر حركة وتشغيل، تعامل مباشر مع العملاء، مطبخ، أمن، ولا فعاليات؟ على أساسها أعطيك اختياري الأول وبديله." if ar else "Absolutely — I can recommend it, but I don’t want to throw out a random option. Is the team mainly active/operational, customer-facing, kitchen, security, or events? I’ll give you a first choice and a backup."), [])
-
+    return (("أكيد أرشح لك، بس ما أبي أعطيك اختيار عشوائي. وصف لي طبيعة شغل الفريق بجملة واحدة وأنا أعطيك اختياري الأول وبديله." if ar else "Absolutely — tell me in one line what the team does day to day and I’ll give you a first choice plus an alternative."), [])
 
 def _natural_local_reply(payload: "ChatRequest", reason: str = "") -> dict[str, Any]:
-    """Useful conversational fail-safe for temporary provider/rate-limit failures."""
+    """Customer-first fail-safe that remains useful even when the model is unavailable."""
     latest = payload.messages[-1].content if payload.messages else ""
     ar = payload.conversation_language == "ar"
-    draft = _merge_model_draft(payload.draft_quote, {}, latest, payload.collection.current_field)
+    draft = _semantic_capture(payload.draft_quote, latest, payload.collection.current_field)
     field_status = _clean_field_status({}, draft, payload.collection.resolved)
     actions: list[dict[str, Any]] = []
     t = (latest or "").strip().lower()
     company_name = _extract_company_name(latest)
-    project_hint = _extract_project_hint(latest)
-    project = str(draft.get("project", "") or project_hint or "")
+    project = str(draft.get("project", "") or "")
+    uniforms = list(draft.get("uniforms") or [])
 
-    if _is_greeting(latest):
-        reply = "هلا 👋 حياك الله. قل لي شنو محتاج بالضبط وأنا أرتبه معك." if ar else "Hi 👋 Welcome. Tell me what you need and I’ll work it through with you."
-    elif _is_casual_nudge(latest):
+    def pack(reply: str, acts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        return {
+            "reply": reply,
+            "actions": acts or [],
+            "auto_action": None,
+            "context": _clean_context({}, payload.context),
+            "draft_quote": draft,
+            "field_status": field_status,
+            "conversation_language": payload.conversation_language,
+            "model": MODEL,
+            "provider": "local-failsafe",
+            "fallback_reason": reason[:120],
+        }
+
+    if _is_greeting(latest) or re.match(r"^(?:هلا+|مرحبا|مرحبًا|أهلين|اهلين)\s+(?:أنا|انا)\s+", latest.strip(), flags=re.I):
+        name = str(draft.get("name", "") or "").strip()
+        if ar:
+            return pack(f"هلا {name} 👋 تشرفنا. قل لي شنو تحتاج وأنا أمشي معك." if name else "هلا 👋 حياك الله. قل لي شنو تحتاج وأنا أمشي معك.")
+        return pack(f"Hi {name} 👋 Nice to meet you. Tell me what you need and I’ll work through it with you." if name else "Hi 👋 Welcome. Tell me what you need and I’ll work through it with you.")
+
+    if _is_casual_nudge(latest):
         if re.search(r"اسألني انت|اسالني انت|اسأل انت|اسال انت|ابدأ اسأل|ابدأ اسال|كمل انت|كمّل انت|ask me|you ask|lead me", latest, flags=re.I):
-            current = payload.collection.current_field or "company"
+            current = payload.collection.current_field or ""
             prompts_ar = {
-                "company": "تمام، نبدأ من الأساس: شنو اسم الشركة أو الجهة؟",
-                "industry": "تمام، ومجال نشاط الشركة شنو تقريبًا؟",
-                "project": "حلو، والزي هذا لأي فريق أو استخدام بالتحديد؟",
-                "uniforms": "خلنا نختار الأنسب. شنو نوع الزي اللي في بالك، وإذا محتار أقدر أرشح لك؟",
+                "company": "تمام، نبدأ من عندك: شنو اسم الشركة أو الجهة؟",
+                "industry": "تمام. طبيعة نشاط الشركة شنو تقريبًا؟",
+                "project": "حلو. الزي هذا لأي فريق أو وظيفة بالتحديد؟",
+                "uniforms": "أقدر أرشح لك بدل ما أخليك تختار عشوائي. شنو طبيعة شغل الفريق اليومية؟",
+                "color": "تمام. في لون معين في بالك أو لون مرتبط بهوية الشركة؟",
             }
             prompts_en = {
-                "company": "Sure — let’s start with the basics. What is the company or organization name?",
-                "industry": "Sure — what industry is the company in?",
-                "project": "Great — which team or use is the uniform for?",
-                "uniforms": "Let’s narrow it down. What uniform type do you have in mind, or would you like me to recommend one?",
+                "company": "Sure — what is the company or organization name?",
+                "industry": "Sure — what kind of business is it?",
+                "project": "Great — which team or job role is the uniform for?",
+                "uniforms": "I can recommend instead of making you pick blindly. What does the team do day to day?",
+                "color": "Great. Do you already have a preferred color or brand color?",
             }
-            reply = (prompts_ar if ar else prompts_en).get(current, "تمام، خلنا نكمل من أهم تفصيلة ناقصة عندي." if ar else "Sure — let’s continue with the most useful missing detail.")
-        else:
-            reply = "معك ومركز 👌 كمل، شنو في بالك؟" if ar else "I’m with you 👍 Go ahead — what’s on your mind?"
-    elif re.fullmatch(r"(?:شركتي|الشركة|الشركه|اسم الشركة|اسم الشركه|my company|company)", t, flags=re.I):
-        reply = "تمام، شنو اسم الشركة؟" if ar else "Sure — what’s the company name?"
-    elif company_name:
-        reply = (f"تمام، شركة {company_name} 👍 وش نوع الفريق أو الاستخدام اللي تبون الزي له؟" if ar else f"Got it — {company_name}. What team or use is the uniform for?")
-    elif _asks_for_recommendation(latest):
-        reply, actions = _local_recommendation(payload)
-    elif _asks_uniform_types(latest) or re.search(r"(?:ازياء|أزياء|يونيفورمات|ملابس\\s+عمل).*(?:عندكم|متوفر|متاحة|available|types)|(?:ايه|إيه|وش|شنو|ما).*(?:الازياء|الأزياء|الأنواع|انواع)", t, flags=re.I):
-        if re.search(r"طيار|pilot|airline|aviation", f"{latest} {project}", flags=re.I):
-            reply = ("إذا تقصد زي طيارين رسمي، ما عندنا داخل الموقع فئة جاهزة باسم «زي طيارين» أقول لك إنها موجودة وهي مو موجودة. نقدر نمشيه كـ Custom Uniform ونحدد الشكل والهوية المطلوبة، أما لو المقصود طاقم أرضي أو فريق تشغيلي فأقدر أرشح من الأنواع الموجودة حسب طبيعة شغلهم. تحب الستايل يكون رسمي جدًا ولا عملي أكثر؟" if ar else "If you mean a formal airline pilot uniform, the site does not list a ready category specifically called pilot uniforms, so I won’t pretend it does. We can treat it as a custom-uniform enquiry and define the look and branding. If you mean ground or operational crew, I can recommend from the existing categories. Do you want a very formal look or something more practical?")
-            actions = [{"label":"الزي المخصص" if ar else "Custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}]
-        else:
-            reply = ("أكيد. الموجود عند ALF يشمل بولو وتي‑شيرت، زي شيف ومرايل، قبعات وإكسسوارات شيف، كارجو وملابس عمل، زي أمني، وملابس فرق الفعاليات والترويج. قل لي الفريق بيشتغل شنو وأنا أضيقها لك بدل ما أخليك تختار من قائمة طويلة." if ar else "ALF offers polos and T-shirts, chef uniforms and aprons, chef caps/accessories, cargo/workwear, security uniforms, and event/promo apparel. Tell me what the team actually does and I’ll narrow it down for you.")
-            actions = [{"label":"عرض كل الأنواع" if ar else "Browse all uniforms","type":"navigate","value":"/pages/custom-uniforms"}]
-    elif _looks_like_uniform_intent(latest) or re.search(r"(?:ازياء|أزياء|يونيفورمات|ملابس\\s+عمل)", t, flags=re.I):
-        if re.search(r"طيار|pilot|airline|aviation", f"{latest} {project}", flags=re.I):
-            reply = ("أكيد. لو الزي لطيارين رسميين فالأفضل نتعامل معه كطلب Custom Uniform لأن الموقع ما يعرض فئة طيارين جاهزة بالاسم. نقدر نحدد معك الستايل الرسمي، الألوان، الشعار والكمية وبعدها فريق ALF يراجع الطلب. تقصد طيارين فعليًا ولا طاقم أرضي بالمطار؟" if ar else "Absolutely. For formal pilots, I’d treat this as a custom-uniform requirement because the site does not list a dedicated pilot category. We can define the formal look, colors, logo and quantity for ALF to review. Do you mean pilots themselves or airport ground crew?")
-            actions = [{"label":"عرض الزي المخصص" if ar else "View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}]
-        elif project:
-            reply, actions = _local_recommendation(payload)
-        elif str(draft.get("company", "") or "").strip():
-            reply = "أكيد. الزي لأي فريق داخل الشركة بالضبط؟ عمال، مبيعات، استقبال، مطبخ، أمن، فعاليات…؟" if ar else "Absolutely. Which team inside the company is this for — workers, sales, reception, kitchen, security, events, or something else?"
-        else:
-            reply = "أكيد نساعدك. الزي لمين بالضبط أو لطبيعة شغل شنو؟ على أساسها أرشح لك بدل ما أعطيك اختيار عشوائي." if ar else "Absolutely. Who is the uniform for, or what kind of work do they do? I’ll recommend from there rather than guessing."
-    elif re.search(r"(price|pricing|cost|kwd|دينار|سعر|تكلفة)", t):
-        reply = "السعر يتحدد حسب النوع والكمية والمقاسات والبراندنج، وفريق ALF يأكد عرض السعر بعد مراجعة الطلب. إذا تحب نقدر نضبط المواصفات أول بحيث يوصلهم Brief واضح." if ar else "Pricing depends on the uniform type, quantity, sizes and branding, and ALF confirms the quotation after reviewing the requirement. I can help you shape a clear brief first."
-    elif re.search(r"(minimum|moq|اقل كمية|أقل كمية)", t):
-        reply = "الحد الأدنى يبدأ من 12 قطعة لكل نوع يونيفورم." if ar else "The minimum starts from 12 pieces per uniform type."
-    elif re.search(r"(logo|brand|branding|embroider|embroidery|print|printing|طباعة|تطريز|لوجو|شعار)", t):
-        reply = "متوفر تطريز وطباعة. الأنسب يعتمد على نوع الزي وشكل الشعار والاستخدام؛ إذا قلت لي القطعة اللي اخترتها أرشح لك بين الاثنين." if ar else "ALF offers embroidery and printing. The better option depends on the garment, logo and use; tell me the item and I’ll help you choose."
-        actions = [{"label":"خيارات البراندنج" if ar else "Branding options","type":"navigate","value":"/pages/embroidery-printing"}]
-    else:
-        current = (payload.collection.current_field or "").strip()
-        stripped = re.sub(r"[!؟?.,،]+$", "", latest.strip().lower())
-        if current == "company" and stripped in {"شركتي", "الشركة", "اسم الشركة", "my company", "company"}:
-            reply = "تمام، شنو اسم الشركة؟" if ar else "Sure — what’s the company name?"
-        elif current:
-            # Let the storefront parse an answer and ask the genuinely next field.
-            reply = ""
-        else:
-            reply = ("أكيد، خذ راحتك. قل لي اللي تحتاجه عن الزي أو الاختيارات وأنا أرد عليك مباشرة؛ وإذا احتجنا تفاصيل للطلب نجمعها بهدوء أثناء الكلام." if ar else "Of course — talk to me normally. Ask me anything about the uniforms or options and I’ll answer directly; if we need order details, we can collect them naturally as we go.")
+            return pack((prompts_ar if ar else prompts_en).get(current, "تمام، اسألني أو خلّيني أقودك من اللي ناقص عندي." if ar else "Sure — I can lead from the most useful missing detail."))
+        return pack("معك ومركز 👌 كمل، شنو في بالك؟" if ar else "I’m with you 👍 Go ahead — what’s on your mind?")
 
-    return {
-        "reply": reply,
-        "actions": actions,
-        "auto_action": None,
-        "context": _clean_context({}, payload.context),
-        "draft_quote": draft,
-        "field_status": field_status,
-        "conversation_language": payload.conversation_language,
-        "model": MODEL,
-        "provider": "local-failsafe",
-        "fallback_reason": reason[:120],
-    }
+    # Short clarification after a pilot/ground-crew disambiguation.
+    if re.fullmatch(r"(?:ارضي|أرضي|طاقم ارضي|طاقم أرضي|ground|ground crew|ground staff)", t, flags=re.I):
+        reply, actions = _local_recommendation(payload)
+        return pack(reply, actions)
+    if re.fullmatch(r"(?:طيارين? فعليا|طيارين? فعليًا|طيارين? رسميين?|pilots?|formal pilots?)", t, flags=re.I):
+        reply, actions = _local_recommendation(payload)
+        return pack(reply, actions)
+
+    if re.fullmatch(r"(?:شركتي|الشركة|الشركه|اسم الشركة|اسم الشركه|my company|company)", t, flags=re.I):
+        return pack("تمام، شنو اسم الشركة؟" if ar else "Sure — what’s the company name?")
+
+    if company_name:
+        return pack((f"تمام، سجلت اسم الشركة: {company_name}. قل لي شنو تحتاج لها بالضبط وأنا أرتب الخيارات معك." if ar else f"Got it — I have the company as {company_name}. Tell me what you need for the team and I’ll help narrow the options."))
+
+    # Multi-fact team split / total quantity.
+    counts = _extract_team_counts(latest)
+    total_qty = _extract_total_quantity(latest)
+    if counts:
+        bits = []
+        if total_qty:
+            bits.append((f"الإجمالي {total_qty}" if ar else f"total {total_qty}"))
+        if "male_count" in counts:
+            bits.append((f"{counts['male_count']} رجال" if ar else f"{counts['male_count']} men"))
+        if "female_count" in counts:
+            bits.append((f"{counts['female_count']} سيدات" if ar else f"{counts['female_count']} women"))
+        joined = "، ".join(bits)
+        if re.search(r"طيار|pilot", project, flags=re.I):
+            return pack((f"تمام، ثبت عندي {joined}. وبما إن الطلب للطيارين، نقدر نمشيه كـ Custom Uniform بدل ما نختار فئة غير مناسبة من الكتالوج. عندكم لون أو هوية معينة للزي؟" if ar else f"Got it — I have {joined}. Since this is for pilots, we can treat it as a Custom Uniform requirement instead of forcing a mismatched catalog category. Do you have a preferred color or brand look?"), [{"label":"عرض الزي المخصص" if ar else "View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}])
+        return pack((f"تمام، ثبت عندي {joined}." if ar else f"Got it — I have {joined}."))
+
+    if _asks_for_recommendation(latest):
+        reply, actions = _local_recommendation(payload)
+        return pack(reply, actions)
+
+    asks_types = _asks_uniform_types(latest) or bool(re.search(r"(?:ازياء|أزياء|يونيفورمات|ملابس\s+عمل).*(?:عندكم|متوفر|متاحة|available|types)|(?:ايه|إيه|وش|شنو|ما).*(?:الازياء|الأزياء|الأنواع|انواع|الخيارات|خيارات)", t, flags=re.I))
+    if asks_types:
+        if re.search(r"أرضي|ارضي|ground", project, flags=re.I):
+            return pack(("للطاقم الأرضي، أقرب خيارين فعليًا هم: Cargo Pants & Workwear لو الشغل تشغيلي وفيه حركة، أو Polo Shirts & T‑Shirts لو الفريق يتعامل مع المسافرين وواجهة الخدمة. إذا قلت لي دورهم اليومي أقول لك أي واحد أختار." if ar else "For ground crew, the two most relevant options are Cargo Pants & Workwear for active operational roles, or Polo Shirts & T-Shirts for customer-facing service teams. Tell me what they do day to day and I’ll choose between them."), [
+                {"label":"عرض الـWorkwear" if ar else "View Workwear","type":"navigate","value":"/pages/workwear"},
+                {"label":"عرض البولو" if ar else "View Polo","type":"navigate","value":"/pages/polo-t-shirts"},
+            ])
+        if re.search(r"طيار|pilot|airline|aviation", f"{latest} {project}", flags=re.I):
+            return pack(("للطيارين الرسميين ما عندنا فئة جاهزة باسم «زي طيارين» داخل الكتالوج، فالأصح نخليه Custom Uniform. أما لو كنت تقصد الطاقم الأرضي فالأقرب Workwear أو Polo حسب طبيعة الدور." if ar else "For formal pilots, the current catalog does not list a dedicated pilot category, so the right route is Custom Uniform. For ground crew, Workwear or Polos are the closer options depending on the role."), [{"label":"عرض الزي المخصص" if ar else "View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}])
+        return pack(("أكيد. الموجود عند ALF يشمل بولو وتي‑شيرت، زي شيف ومرايل، قبعات وإكسسوارات شيف، كارجو وملابس عمل، زي أمني، وملابس فرق الفعاليات والترويج. وإذا احتياجك خارج الفئات دي نقدر نمشيه كـ Custom Uniform." if ar else "ALF offers polos and T-shirts, chef uniforms and aprons, chef caps/accessories, cargo/workwear, security uniforms, and event/promo apparel. If your requirement sits outside those categories, we can handle it as a Custom Uniform enquiry."), [{"label":"عرض كل الأنواع" if ar else "Browse all uniforms","type":"navigate","value":"/pages/custom-uniforms"}])
+
+    if _looks_like_uniform_intent(latest) or re.search(r"(?:ازياء|أزياء|يونيفورمات|ملابس\s+عمل|زي\s+طيار)", t, flags=re.I):
+        reply, actions = _local_recommendation(payload)
+        return pack(reply, actions)
+
+    # A direct quantity can complete the one selected/pending uniform.
+    if total_qty >= 12:
+        if uniforms:
+            item = uniforms[0]
+            return pack((f"تمام، ثبت عندي {total_qty} قطعة من {item.get('name','الزي')}. بالنسبة للشكل، في لون معين أو لون من هوية الشركة تحب نمشي عليه؟" if ar else f"Great — I have {total_qty} pieces for {item.get('name','the uniform')}. Do you have a preferred color or brand color for the look?"))
+        if re.search(r"طيار|pilot", project, flags=re.I):
+            return pack((f"تمام، العدد {total_qty} قطعة. وبما إن الطلب للطيارين، أسجله كـ Custom Uniform بدل ما أختار لك فئة غلط. في لون أو ستايل رسمي معين في بالك؟" if ar else f"Got it — {total_qty} pieces. Since this is for pilots, I’ll treat it as a Custom Uniform requirement rather than force the wrong category. Do you have a preferred color or formal style?"), [{"label":"عرض الزي المخصص" if ar else "View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}])
+
+    if re.search(r"(price|pricing|cost|kwd|دينار|سعر|تكلفة)", t):
+        return pack("السعر يتحدد حسب النوع والكمية والمقاسات والبراندنج، وفريق ALF يأكد عرض السعر بعد مراجعة الطلب. نقدر نضبط المواصفات هنا أول عشان يوصلهم Brief واضح." if ar else "Pricing depends on uniform type, quantity, sizes and branding, and ALF confirms the quotation after reviewing the requirement. I can help you shape a clear brief first.")
+    if re.search(r"(minimum|moq|اقل كمية|أقل كمية)", t):
+        return pack("الحد الأدنى يبدأ من 12 قطعة لكل نوع يونيفورم." if ar else "The minimum starts from 12 pieces per uniform type.")
+    if re.search(r"(logo|brand|branding|embroider|embroidery|print|printing|طباعة|تطريز|لوجو|شعار)", t):
+        return pack("متوفر تطريز وطباعة. الأنسب يعتمد على نوع الزي وشكل الشعار والاستخدام؛ إذا قلت لي القطعة اللي اخترتها أرشح لك بين الاثنين." if ar else "ALF offers embroidery and printing. The better option depends on the garment, logo and use; tell me the item and I’ll help you choose.", [{"label":"خيارات البراندنج" if ar else "Branding options","type":"navigate","value":"/pages/embroidery-printing"}])
+
+    # Never return an empty reply. If the model is down, keep the conversation alive
+    # instead of forcing the storefront into a repetitive field prompt.
+    current = (payload.collection.current_field or "").strip()
+    if current == "color":
+        return pack("تمام. وبالنسبة للشكل العام، في لون معين في بالك أو لون مرتبط بهوية الشركة؟" if ar else "Great. Do you have a preferred color or a brand color for the overall look?")
+    if current == "uniforms":
+        reply, actions = _local_recommendation(payload)
+        return pack(reply, actions)
+    return pack("فاهمك. كمل لي الفكرة براحتك وأنا أرد عليك على نفس النقطة، ونرتب تفاصيل الطلب أثناء الكلام بدون ما نحولها لاستبيان." if ar else "I’m with you. Keep going and I’ll respond to the point you’re making; we can collect the order details naturally along the way.")
 
 @app.get("/")
 def root() -> dict[str, str]:
@@ -720,7 +877,7 @@ def root() -> dict[str, str]:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "version": "1.8.0", "architecture": "state-first-anti-repeat", "model": MODEL, "ai_configured": bool(GROQ_API_KEY)}
+    return {"status": "ok", "version": "1.9.0", "architecture": "semantic-state-customer-first", "model": MODEL, "ai_configured": bool(GROQ_API_KEY)}
 
 
 @app.post("/api/chat")

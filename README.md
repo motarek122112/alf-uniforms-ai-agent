@@ -1,21 +1,21 @@
-ALF Groq AI Agent Backend V8 — state-first anti-repeat fix
+# ALF Groq AI Agent Backend V9 — Semantic State / Customer First
 
-# ALF Uniforms AI Agent Backend V7 — Customer-First + Rate-Limit Fix
+This version fixes the remaining conversation loop where the visitor could clarify a role, ask for options, or provide a quantity and the assistant would fall back to the same uniform-type question.
 
-This version fixes the main cause of the repetitive fallback behavior seen after the first successful AI reply.
+## Main changes
+- State is semantic rather than tied to one rigid expected field.
+- Visitor corrections are authoritative: `ارضي` changes pilot context to airport ground crew; later explicit pilot wording can change it back.
+- `Custom Uniform` is a valid structured enquiry item for formal pilot-uniform requirements.
+- Multi-fact turns can capture several details at once, including total quantity and male/female counts.
+- Company extraction stops before the sentence moves into a uniform request.
+- Industry/project details can be captured whenever the visitor volunteers them, not only when that exact field is pending.
+- The local fail-safe always returns a useful contextual reply; it no longer returns an empty response that causes the storefront to repeat a fixed collector question.
+- Side questions and recommendation requests are answered first; enquiry completion remains a background goal.
 
-## What changed
-- The system prompt was reduced from roughly 16k characters to about 4.5k characters.
-- Only the latest 8 conversation messages are sent to Groq instead of 24.
-- The backend sends one Groq request per visitor turn instead of automatically retrying a failed request and potentially doubling token usage.
-- `reasoning_effort=low` and a smaller completion budget reduce latency/token use.
-- The runtime context sent to the model is compact and does not include the large frontend collector rule text.
-- The 20-field enquiry is still enforced before final confirmation, but it stays in the background.
-- The local fail-safe is much more conversational and understands Arabic/Gulf phrases such as `هلااا`, `شركتي`, `اسم شركتي الأحمر`, `أبي أزياء`, and requests involving pilots/workers.
-- A formal pilot uniform is not falsely presented as an existing ready category; it is handled as a custom-uniform requirement.
-- `/health` now shows whether an AI key is configured using `ai_configured` without exposing the key.
+## Deploy
+Replace the files in the existing GitHub backend repository, commit/push, and let the same Render service redeploy. Keep the existing `GROQ_API_KEY` and other environment variables.
 
-## Deployment
-Replace the backend files in the same GitHub repository and deploy the existing Render service. Keep `GROQ_API_KEY`. The default model remains `openai/gpt-oss-20b`.
-
-After deployment, open `/health` on the Render service and confirm `status` is `ok` and `ai_configured` is `true`.
+After deployment, `/health` should report:
+- `version`: `1.9.0`
+- `architecture`: `semantic-state-customer-first`
+- `ai_configured`: `true`
