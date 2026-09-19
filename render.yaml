@@ -13,7 +13,5 @@ services:
         value: openai/gpt-oss-20b
       - key: ALLOWED_ORIGINS
         value: https://alf-uniforms.myshopify.com
-      - key: ALLOWED_ORIGIN_REGEX
-        value: "https://.*"
       - key: RATE_LIMIT_PER_MINUTE
         value: "30"

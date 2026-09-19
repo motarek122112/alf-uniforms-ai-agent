@@ -1,21 +1,38 @@
-# ALF Groq AI Agent Backend V9 — Semantic State / Customer First
+# ALF Uniforms AI Agent Backend V3 — Sales Concierge
 
-This version fixes the remaining conversation loop where the visitor could clarify a role, ask for options, or provide a quantity and the assistant would fall back to the same uniform-type question.
+FastAPI backend for the ALF Shopify website assistant using Groq.
 
-## Main changes
-- State is semantic rather than tied to one rigid expected field.
-- Visitor corrections are authoritative: `ارضي` changes pilot context to airport ground crew; later explicit pilot wording can change it back.
-- `Custom Uniform` is a valid structured enquiry item for formal pilot-uniform requirements.
-- Multi-fact turns can capture several details at once, including total quantity and male/female counts.
-- Company extraction stops before the sentence moves into a uniform request.
-- Industry/project details can be captured whenever the visitor volunteers them, not only when that exact field is pending.
-- The local fail-safe always returns a useful contextual reply; it no longer returns an empty response that causes the storefront to repeat a fixed collector question.
-- Side questions and recommendation requests are answered first; enquiry completion remains a background goal.
+## What V3 adds
 
-## Deploy
-Replace the files in the existing GitHub backend repository, commit/push, and let the same Render service redeploy. Keep the existing `GROQ_API_KEY` and other environment variables.
+- Sales-concierge personality: proactive, concise, human-like and focused on resolving the customer's requirement instead of ending the chat quickly.
+- Structured quote-draft memory across the conversation.
+- The agent collects the requirement in chat before sending the visitor to Get a Quote.
+- It avoids re-asking information already provided.
+- It collects uniform + quantity, team/project details, branding and contact/follow-up details.
+- It summarizes the complete requirement and asks for explicit confirmation before the Shopify form is changed.
+- The confirmed quote-update carries the complete draft so all applicable fields across the 4 Get a Quote steps can be filled at once.
+- Navigation actions can include a same-language follow-up question that the theme displays as a temporary notification after the destination page loads.
+- The agent is instructed to continue helping after a rejected recommendation instead of closing the conversation.
 
-After deployment, `/health` should report:
-- `version`: `1.9.0`
-- `architecture`: `semantic-state-customer-first`
-- `ai_configured`: `true`
+## Render update
+
+Replace the previous backend files in the same GitHub repository with this V3 package and redeploy the same Render service. Keep the existing Render URL and environment variables.
+
+- Runtime: Python 3
+- Build command: `pip install -r requirements.txt`
+- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- Health check: `/health`
+
+## Environment variables
+
+- `GROQ_API_KEY` — keep it in Render only.
+- `GROQ_MODEL` — default `openai/gpt-oss-20b`.
+- `ALLOWED_ORIGINS` — e.g. `https://alf-uniforms.myshopify.com`
+- `RATE_LIMIT_PER_MINUTE` — default 30.
+
+## Endpoints
+
+- `GET /health`
+- `POST /api/chat`
+
+The backend remains stateless. The browser/theme stores the active conversation, old chats and structured quote draft; the backend receives that state on each request and returns the merged draft.
