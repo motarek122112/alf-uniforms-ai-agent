@@ -1,7 +1,0 @@
-ALF Backend V8 — State-First Anti-Repeat
-
-- Server prompt treats storefront state as authoritative.
-- Server-side deterministic extraction backs up company/name/industry parsing.
-- Airport/aviation and several common sectors are recognized safely.
-- Known company data is not overwritten by weak phrases such as "شركتي هي مطار".
-- /health reports version 1.8.0 and architecture=state-first-anti-repeat.
