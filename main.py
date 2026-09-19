@@ -56,15 +56,18 @@ STATIC_ROUTES = {
 
 SYSTEM_PROMPT = f"""
 You are ALF Digital Sales Concierge, a real-feeling website sales and customer-success employee for ALF Uniforms in Kuwait.
-Your job is to help the visitor naturally, understand the real uniform requirement, answer website/product questions accurately, and quietly make sure ALF receives a complete business enquiry before final confirmation.
+Your PRIMARY job is to satisfy the visitor and help them make useful progress like a strong human sales adviser. Understanding and completing the business enquiry is an important SECONDARY goal that happens quietly in the background. Never sacrifice a helpful, natural answer just to ask the next form field.
 
 HUMAN CONVERSATION STANDARD
 - Sound like a capable human sales adviser, not a form, wizard, checklist, or scripted AI.
 - Keep replies clear, warm, concise and context-aware. Vary acknowledgements and sentence structure naturally.
 - NEVER mention counters such as 3/20, 10/20, "step X of Y", "we are collecting in order", "every field in order", or any internal checklist/progress language.
 - The required field order is INTERNAL ONLY. Use it to know what is still missing, but do not expose the mechanism to the visitor.
-- The visitor may interrupt, joke, greet you, ask a related question, ask what options exist, or go slightly off the current topic. Respond naturally first, then smoothly return to the unresolved requirement when appropriate.
-- If the visitor makes normal small talk, respond naturally. Only if they move clearly to a topic unrelated to ALF/the website, politely say you do not have reliable information about that topic and bring the conversation back to how you can help with their ALF requirement.
+- The visitor may interrupt, joke, greet you, ask a related question, ask for your opinion, ask you to recommend something, compare options, challenge a suggestion, or go slightly off the current topic. ALWAYS respond to the latest human intent first. The collector must wait its turn.
+- Customer satisfaction and useful advice come before data collection. If the visitor asks a question, answer it fully before asking for any missing enquiry detail. Sometimes the best reply has no collector question at all.
+- If the visitor asks "اقترح انت", "رشح لي", "what do you suggest?", or similar, make a concrete recommendation from the known context. Do NOT repeat the pending field question. Explain why your recommendation fits and mention a realistic alternative when useful.
+- If the visitor makes normal small talk, short casual remarks, or says things like "ركز", "تمام", "اسمع", respond like a human briefly and naturally. Only if they clearly ask for factual help unrelated to ALF, uniforms, business ordering, the website, or ordinary conversation, say that topic is outside what you can reliably help with here.
+- Do not force the conversation back to the enquiry after every detour. Return to a missing detail only when there is a natural opening.
 - Never repeat a question word-for-word if the visitor has already answered part of it. Ask only for the missing piece.
 - Never re-ask information already present in draft_quote or explicitly resolved in CURRENT WEBSITE STATE.collection.resolved.
 - If the visitor answers a different field than the one you asked, capture the information in its correct field, acknowledge it naturally, and then continue with the earliest unresolved field.
@@ -77,7 +80,7 @@ CURRENT WEBSITE STATE contains conversation_language. Follow it for your reply.
 - If conversation_language is "en", reply in natural professional English.
 - Do NOT change language just because the visitor sends a number, phone number, email, date, size code, product/category name, "yes", "no", "Printing", "Embroidery", "call", "WhatsApp", or another short value in the other language.
 - The storefront decides when a language switch is clear and sends the resulting conversation_language. Respect it consistently until it changes again.
-- When Arabic is active, even if the visitor answers with an English field value such as "Printing" or "call", acknowledge and continue in Arabic.
+- When Arabic is active, even if the visitor answers with an English field value such as "Printing" or "call", acknowledge and continue in Arabic. Mirror the visitor's Arabic style lightly (Kuwaiti/Gulf-neutral, Egyptian, or MSA) while keeping the reply clear and professional; do not sound like a rigid translated form.
 - When English is active, do the equivalent in English.
 - Understand common Gulf/Kuwaiti Arabic naturally. In this website context, "زي" can mean a work uniform, and "أبي/ابي" means "I want". So "أبي زي" is a normal request for a uniform, not an unrelated topic or a company name.
 
@@ -85,7 +88,7 @@ BUSINESS RULES
 - ALF sells custom uniforms for organizations and teams in Kuwait.
 - The website is enquiry/quotation based, not fixed unit-price ecommerce.
 - Minimum order starts from 12 pieces per uniform type. Never invent a quantity.
-- Never invent a unit price, final quotation, delivery promise, stock status, client name, completed project, testimonial, fabric specification, or production time.
+- Never invent a unit price, final quotation, delivery promise, stock status, client name, completed project, testimonial, fabric specification, or production time. You MAY give general practical advice about choosing uniform categories, style, comfort, visibility, or branding when it is clearly presented as guidance rather than an ALF-specific factual claim.
 - ALF confirms the final quotation after reviewing the actual requirement.
 - Real ALF Work means only the real-work content populated by ALF. Never invent proof.
 - Human help is available by WhatsApp when requested or when a human decision is needed.
@@ -139,10 +142,10 @@ When the visitor is building a real requirement, collect ALL of the following be
 19) contact_time — best contact time
 20) notes — extra order notes, or explicitly none
 
-The visitor does NOT need to know there are 20 fields. Never show that count.
+The visitor does NOT need to know there are 20 fields. Never show that count. The list is a background completeness checklist, not the conversation script. You may collect fields out of order when the visitor volunteers them, and you may postpone a missing field while helping with a recommendation or question.
 
 FIELD RESOLUTION
-- CURRENT WEBSITE STATE.collection.current_field tells you the earliest unresolved field the storefront is currently prioritizing.
+- CURRENT WEBSITE STATE.collection.current_field is only a hint about the earliest unresolved field. It must NEVER override the visitor's latest question or request.
 - CURRENT WEBSITE STATE.collection.resolved may contain known, unknown, or none.
 - Return field_status as the COMPLETE merged status you can safely support from the conversation so far.
 - Use "known" only when the information exists in draft_quote.
@@ -152,9 +155,14 @@ FIELD RESOLUTION
 - Do not fabricate values just to complete the enquiry.
 
 NATURAL QUESTIONING
-- Ask one natural question at a time, or a small pair only when they are tightly connected.
-- Do not use repetitive templates like "To keep the enquiry complete..." or "Got it — I recorded..." every turn.
-- Vary the transition naturally: acknowledge what the visitor said, use it when helpful, then ask the next missing item.
+- The latest user intent has priority over CURRENT WEBSITE STATE.collection.current_field. current_field is only a quiet reminder, never an instruction to ignore the user.
+- Ask one natural question at a time, or a small pair only when tightly connected. Do NOT ask a collector question in every message.
+- Do not use repetitive templates like "To keep the enquiry complete...", "Got it — I recorded...", or the same bare question again and again.
+- Use a short human lead-in when appropriate: reflect what you understood, give useful advice, then ask only the most natural next question.
+- If the user asks for advice, give the advice first. If enough context already exists, do not ask them to repeat team type, industry, or use case.
+- If the user says something ambiguous, clarify conversationally instead of treating it as a field value.
+- Never answer a recommendation request with only the pending collector question.
+- A good conversation may spend several turns discussing options before collecting another field.
 - If they ask "what types are available?", answer with the real categories, then naturally ask which one fits them and, once selected, the approximate quantity.
 - If a uniform type is chosen without quantity, keep it in draft_quote with qty 0 and ask only for the quantity next. If the next message is just a valid number and exactly one selected uniform still has qty 0, apply that number to it.
 - If there are multiple selected uniforms and the visitor gives one total quantity, ask how the total is split. Never invent the split.
@@ -230,7 +238,7 @@ Keep it short and in conversation_language.
 RECOMMENDATION GUIDANCE
 - Restaurant/cafe/kitchen: Chef Uniforms & Aprons; front-of-house can also use Polo Shirts & T-Shirts.
 - Corporate/office/reception/sales: Polo Shirts & T-Shirts.
-- Warehouse/maintenance/logistics/operations: Cargo Pants & Workwear.
+- Warehouse/maintenance/logistics/operations/general workers/labour teams: Cargo Pants & Workwear. If the workers are customer-facing retail staff rather than operational workers, Polo Shirts & T-Shirts can be the cleaner alternative.
 - Security/guards: Security Uniforms.
 - Exhibitions/promotional/event staff: Event & Promo Team Apparel; polos may also suit a cleaner corporate look.
 
@@ -249,9 +257,12 @@ Return ONLY one valid JSON object:
   "field_status":{{"company":"known|unknown|none", "...":"..."}}
 }}
 Keep actions to 0–3 genuinely useful choices. Never put quote-update in auto_action. Do not output markdown.
+
+IMPORTANT BEHAVIOR EXAMPLE
+If the known project/team is "العمال" and the visitor says "اقترح انت", do something like: recommend Cargo Pants & Workwear for active/operational workers, explain that polos are better if they mainly face customers, and ask which work environment is closer. Do NOT reply with "وش نوع الزي اللي تحتاجه؟" because that ignores the visitor's request.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.4.0")
+app = FastAPI(title=APP_NAME, version="1.5.0")
 # Shopify can serve the same uploaded theme from the myshopify domain, a custom
 # storefront domain, and preview/editor hosts. CORS is not authentication here;
 # the API is already public, while the Groq key remains server-side. Allow HTTPS
@@ -638,6 +649,8 @@ def _looks_like_uniform_intent(text: str) -> bool:
 
 def _is_greeting(text: str) -> bool:
     t = re.sub(r"[!؟?.,،]+$", "", (text or "").strip().lower())
+    if re.fullmatch(r"هلا+", t):
+        return True
     return t in {"هلا", "هلا والله", "مرحبا", "مرحبًا", "السلام عليكم", "اهلين", "أهلين", "hi", "hello", "hey"}
 
 
@@ -646,73 +659,118 @@ def _asks_uniform_types(text: str) -> bool:
     return bool(re.search(r"(?:الأنواع|الانواع|انواع|أنواع|المتاح|متوفر|متاحة|available|categories|types)", t, flags=re.I))
 
 
-def _natural_local_reply(payload: "ChatRequest", reason: str = "") -> dict[str, Any]:
-    """Useful fail-safe response if the model/provider is unavailable.
+def _asks_for_recommendation(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "").strip().lower())
+    return bool(re.search(r"(?:اقترح|رشح|اختار|اختيار|انسب|أنسب|تنصح|مناسب|suggest|recommend|what do you suggest|which.*best|what.*best)", t, flags=re.I))
 
-    The storefront also has a local fallback, but returning 200 here keeps the
-    conversation state, language and collector synchronized instead of making a
-    temporary provider/CORS issue look like a dead chatbot.
+
+def _is_casual_nudge(text: str) -> bool:
+    t = re.sub(r"[!؟?.,،]+$", "", (text or "").strip().lower())
+    return t in {"ركز", "اسمع", "اسمعني", "تمام", "اوكي", "أوكي", "طيب", "معاي", "معايا", "focus", "listen"}
+
+
+def _local_recommendation(payload: "ChatRequest") -> tuple[str, list[dict[str, Any]]]:
+    latest = payload.messages[-1].content if payload.messages else ""
+    draft = payload.draft_quote if isinstance(payload.draft_quote, dict) else {}
+    project = str(draft.get("project", "") or "")
+    industry = str(draft.get("industry", "") or "")
+    combined = f"{latest} {project} {industry}".lower()
+    ar = payload.conversation_language == "ar"
+
+    if re.search(r"(عمال|عامل|مخزن|تحميل|تشغيل|صيانة|لوجست|warehouse|worker|workers|labou?r|operations|maintenance|logistics)", combined, flags=re.I):
+        if ar:
+            return (
+                "بما إن الزي للعمال، أنا أميل أبدأ معك بـ Cargo Pants & Workwear لأنه عملي أكثر للحركة والشغل اليومي. إذا العمال أغلب وقتهم قدام العملاء أو داخل معرض/محل، البولو والتي‑شيرت ممكن يطلع أرتب. لو شغلهم تشغيل وحركة، فالـWorkwear هو اختياري الأول. طبيعة شغلهم أقرب لأي واحد فيهم؟",
+                [
+                    {"label":"عرض الـWorkwear","type":"navigate","value":"/pages/workwear"},
+                    {"label":"عرض البولو والتي‑شيرت","type":"navigate","value":"/pages/polo-t-shirts"},
+                ],
+            )
+        return (
+            "For a general workers team, I’d start with Cargo Pants & Workwear because it suits active day-to-day work better. If they are mostly customer-facing retail staff, polos and T-shirts can look cleaner. If the role is operational, Workwear would be my first pick. Which setting is closer?",
+            [
+                {"label":"View Workwear","type":"navigate","value":"/pages/workwear"},
+                {"label":"View Polo & T-Shirts","type":"navigate","value":"/pages/polo-t-shirts"},
+            ],
+        )
+    if re.search(r"(مطعم|كافيه|مطبخ|شيف|restaurant|cafe|kitchen|chef|hospitality)", combined, flags=re.I):
+        return (("لو الفريق مطعم أو مطبخ، أبدأ بزي الشيف والمرايل، ولو عندك فريق استقبال أو خدمة عملاء أضيف لهم بولو موحد." if ar else "For a restaurant or kitchen team, I’d start with Chef Uniforms & Aprons, with polos as a clean option for front-of-house staff."), [{"label":"عرض زي الشيف","type":"navigate","value":"/pages/chef-uniforms"}] if ar else [{"label":"View Chef Uniforms","type":"navigate","value":"/pages/chef-uniforms"}])
+    if re.search(r"(أمن|حراسة|security|guard)", combined, flags=re.I):
+        return (("لو الفريق أمن أو حراسة، الزي الأمني هو الاختيار الطبيعي كبداية، وبعدها نضبط اللون والبراندنج حسب الجهة." if ar else "For a security team, Security Uniforms are the natural starting point, then we can tailor color and branding to the organization."), [{"label":"عرض الزي الأمني","type":"navigate","value":"/pages/security-uniforms"}] if ar else [{"label":"View Security Uniforms","type":"navigate","value":"/pages/security-uniforms"}])
+    if re.search(r"(فعالية|فعاليات|معرض|ترويج|event|promo|promotion|exhibition)", combined, flags=re.I):
+        return (("للفعاليات والترويج، Event & Promo Team Apparel هو الأقرب، والبولو بديل ممتاز لو تبي شكل أبسط وأكثر رسميّة." if ar else "For events and promotional teams, Event & Promo Team Apparel is the closest match; polos are a good alternative for a cleaner corporate look."), [{"label":"عرض زي الفعاليات","type":"navigate","value":"/pages/event-uniforms"}] if ar else [{"label":"View Event Apparel","type":"navigate","value":"/pages/event-uniforms"}])
+    if re.search(r"(شركة|مكتب|استقبال|مبيعات|corporate|office|reception|sales)", combined, flags=re.I):
+        return (("لفريق مكتب أو استقبال أو مبيعات، البولو والتي‑شيرت غالبًا أفضل بداية: شكله مرتب وسهل نطابقه مع ألوان وهوية الشركة." if ar else "For an office, reception or sales team, polos and T-shirts are usually the best starting point: clean, versatile and easy to match to the brand."), [{"label":"عرض البولو والتي‑شيرت","type":"navigate","value":"/pages/polo-t-shirts"}] if ar else [{"label":"View Polo & T-Shirts","type":"navigate","value":"/pages/polo-t-shirts"}])
+
+    return (("أكيد أرشح لك، بس ما أبي أعطيك اختيار عشوائي. طبيعة شغل الفريق أكثر حركة وتشغيل، تعامل مباشر مع العملاء، مطبخ، أمن، ولا فعاليات؟ على أساسها أعطيك اختياري الأول وبديله." if ar else "Absolutely — I can recommend it, but I don’t want to throw out a random option. Is the team mainly active/operational, customer-facing, kitchen, security, or events? I’ll give you a first choice and a backup."), [])
+
+
+def _natural_local_reply(payload: "ChatRequest", reason: str = "") -> dict[str, Any]:
+    """Human-feeling fail-safe if the model/provider is unavailable.
+
+    It answers the visitor's actual intent first. The enquiry collector is a
+    background aid, not the visible personality of the assistant.
     """
     latest = payload.messages[-1].content if payload.messages else ""
     ar = payload.conversation_language == "ar"
     draft = _merge_model_draft(payload.draft_quote, {}, latest)
     field_status = _clean_field_status({}, draft, payload.collection.resolved)
+    actions: list[dict[str, Any]] = []
 
     if _is_greeting(latest):
         reply = (
-            "هلا 👋 حياك الله. إذا تبي نجهز يونيفورم لفريقك، قل لي وش تحتاج وأنا أمشي معك بشكل طبيعي."
+            "هلا 👋 حياك الله. أكيد، قل لي اللي في بالك ونشوف أنسب حل لك."
             if ar else
-            "Hi 👋 Welcome. Tell me what kind of uniforms your team needs and I’ll work through it with you naturally."
+            "Hi 👋 Welcome. Tell me what you have in mind and I’ll help you work out the best option."
         )
-    elif _looks_like_uniform_intent(latest):
-        if ar:
-            reply = "أكيد 👌 نقدر نجهز لك الزي المناسب. باسم أي شركة أو جهة بيكون الطلب؟"
-        else:
-            reply = "Absolutely. I can help you build the right uniform requirement. What company or organization is the order for?"
+    elif _is_casual_nudge(latest):
+        reply = "معك ومركز 👌 كمل اللي في بالك." if ar else "I’m with you 👍 Go ahead."
+    elif _asks_for_recommendation(latest):
+        reply, actions = _local_recommendation(payload)
     elif _asks_uniform_types(latest):
         if ar:
-            reply = "عندنا بولو وتي شيرت، زي شيف ومرايل، قبعات وإكسسوارات شيف، كارجو وملابس عمل، زي أمني، وملابس فرق الفعاليات والترويج. قل لي استخدام الفريق وأرشح لك الأقرب."
+            reply = "أكيد. عند ALF بولو وتي‑شيرت، زي شيف ومرايل، قبعات وإكسسوارات شيف، كارجو وملابس عمل، زي أمني، وملابس للفعاليات والترويج. إذا قلت لي طبيعة شغل الفريق أرشح لك خيار أول وبديل بدل ما أخليك تختار من القائمة لحالك."
+            actions = [{"label":"عرض كل الأنواع","type":"navigate","value":"/pages/custom-uniforms"}]
         else:
-            reply = "ALF covers Polo Shirts & T-Shirts, Chef Uniforms & Aprons, Chef Caps & Accessories, Cargo Pants & Workwear, Security Uniforms, and Event & Promo Team Apparel. Tell me the team use and I’ll narrow it down."
+            reply = "ALF covers polos and T-shirts, chef uniforms and aprons, chef caps and accessories, cargo/workwear, security uniforms, and event/promo apparel. Tell me how the team works and I’ll recommend a first choice plus an alternative."
+            actions = [{"label":"Browse all uniforms","type":"navigate","value":"/pages/custom-uniforms"}]
+    elif _looks_like_uniform_intent(latest):
+        company_known = bool(str(draft.get("company", "") or "").strip())
+        project_known = bool(str(draft.get("project", "") or "").strip())
+        if ar:
+            if project_known:
+                reply, actions = _local_recommendation(payload)
+            elif company_known:
+                reply = "أكيد. خلنا نضبطه لك صح — الزي هذا لأي فريق أو نوع شغل داخل الشركة؟"
+            else:
+                reply = "أكيد 👌 نقدر نجهز لك الزي المناسب. نبدأ ببساطة: الطلب باسم أي شركة أو جهة؟"
+        else:
+            if project_known:
+                reply, actions = _local_recommendation(payload)
+            elif company_known:
+                reply = "Absolutely. Let’s narrow it down properly — what team or type of work is the uniform for?"
+            else:
+                reply = "Absolutely. Let’s start simply: what company or organization is the order for?"
     else:
         current = (payload.collection.current_field or "").strip()
-        ar_questions = {
-            "company": "باسم أي شركة أو جهة بيكون الطلب؟",
-            "industry": "وش مجال نشاطكم؟",
-            "project": "الزي هذا لأي فريق أو استخدام تحديدًا؟",
-            "uniforms": "وش نوع الزي اللي تحتاجه، وكم قطعة تقريبًا؟",
-            "color": "وش اللون المفضل عندكم؟",
-            "male_count": "كم عدد الرجال تقريبًا ضمن الفريق؟",
-            "female_count": "وكم عدد السيدات تقريبًا؟",
-            "sizes": "هل عندك توزيع المقاسات؟ وإذا مو معروف حاليًا عادي قل لي.",
-            "deadline": "متى تحتاجون الطلب يكون جاهز؟",
-            "branding": "تفضلون البراندنج تطريز أو طباعة، أو نخلي ALF يرشح الأنسب؟",
-            "logo_placement": "وين تفضلون مكان اللوجو؟",
-            "logo_ready": "هل ملف اللوجو جاهز للإرسال؟",
-            "branding_notes": "في أي تفاصيل إضافية تخص البراندنج؟",
-            "name": "وش اسم الشخص المناسب للتواصل؟",
-            "phone": "وش رقم الواتساب أو الهاتف المناسب؟",
-            "email": "وش البريد الإلكتروني المناسب للطلب؟",
-            "area": "في أي منطقة بالكويت بيكون النشاط أو التسليم؟",
-            "followup": "تفضلون المتابعة واتساب، مكالمة، أو اجتماع؟",
-            "contact_time": "وش أنسب وقت للتواصل معك؟",
-            "notes": "في أي ملاحظة أخيرة تحب تضيفها للطلب؟",
-        }
-        en_questions = {
-            "company": "What company or organization is the order for?",
-            "industry": "What industry is the team in?",
-            "project": "What team or use is the uniform for?",
-            "uniforms": "Which uniform type do you need, and roughly how many pieces?",
-            "color": "What color do you prefer?",
-        }
-        if ar:
-            reply = ar_questions.get(current) or "أنا معك. قل لي اللي تحتاجه بخصوص الزي أو الطلب، ونكمل من هناك."
+        stripped = re.sub(r"[!؟?.,،]+$", "", latest.strip().lower())
+        if current == "company" and stripped in {"شركتي", "الشركة", "اسم الشركة", "my company", "company"}:
+            reply = "تمام، وش اسم الشركة؟" if ar else "Sure — what’s the company name?"
+        elif current:
+            # Return no canned collector sentence here. The storefront collector
+            # will first interpret the visitor's answer, then ask the *next*
+            # missing detail. This prevents repeating the question they just answered.
+            reply = ""
         else:
-            reply = en_questions.get(current) or "I’m with you. Tell me what you need for the uniforms or quotation and we’ll continue from there."
+            reply = (
+                "أنا معك. تكلم براحتك — إذا الموضوع له علاقة بالزي، الاختيارات، البراندنج أو الطلب أقدر آخذ وأعطي معك عادي."
+                if ar else
+                "I’m with you. Talk to me normally — if it’s about uniforms, options, branding or the order, we can work through it naturally."
+            )
 
     return {
         "reply": reply,
-        "actions": [],
+        "actions": actions,
         "auto_action": None,
         "context": _clean_context({}, payload.context),
         "draft_quote": draft,
@@ -765,7 +823,7 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
             completion = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
-                temperature=0.25,
+                temperature=0.45,
                 max_completion_tokens=900,
                 response_format={"type": "json_object"},
             )
@@ -776,7 +834,7 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
             completion = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
-                temperature=0.25,
+                temperature=0.45,
                 max_completion_tokens=900,
             )
         content = completion.choices[0].message.content or ""
