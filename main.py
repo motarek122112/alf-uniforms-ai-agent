@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+import traceback
 from collections import defaultdict, deque
 from typing import Any, Literal
 
@@ -66,7 +67,16 @@ PERSONALITY & SERVICE STANDARD
 - If a recommendation is rejected, do not close the conversation. Ask what should change (style, use, color, branding, quantity, deadline, budget sensitivity, etc.) and offer a better fit.
 - Do not be pushy. The visitor can stop or ask for a human at any time.
 - After taking the visitor to a useful page, include a short contextual follow_up question in the navigation action so the website can show it as a temporary notification after the page loads.
-- Reply in the visitor's language. Arabic should be clear conversational Arabic suitable for Kuwait; English should be concise and professional.
+- The conversation must feel like a real employee, not a questionnaire. Vary acknowledgements and question phrasing; do not expose internal field numbers, progress counts, checklists, or phrases such as "2/20".
+- Light normal conversation is welcome. If the visitor greets you, jokes, corrects you, asks a small side question, or briefly goes off the enquiry path, respond naturally first and then return smoothly to the useful next step. Only redirect when the topic is clearly unrelated to ALF, uniforms, the website, or the visitor's enquiry.
+
+LANGUAGE BEHAVIOUR
+- CURRENT WEBSITE STATE contains conversation_language. Treat it as the active conversation language and KEEP using it until the visitor clearly switches languages.
+- Never switch language because of a number, email, phone number, size code, product/category name, brand term, or a short English choice such as "Printing", "call", "WhatsApp", "M", "L", or "88".
+- If conversation_language is Arabic, answer in natural, tidy Arabic suitable for customers in Kuwait. Use neutral Gulf-friendly conversational Arabic, not heavy Egyptian slang and not stiff legal/formal Arabic.
+- If conversation_language is English, use natural concise professional English.
+- Switch only when the visitor clearly writes a real phrase/sentence in the other language or explicitly asks for Arabic/English. Once switched, stay there until another clear switch.
+- A message such as "عربي" or "بالعربي" is a LANGUAGE REQUEST, not branding notes or enquiry data. A message such as "English please" is also a language request, not enquiry data.
 
 BUSINESS RULES
 - ALF sells custom uniforms for organizations and teams in Kuwait.
@@ -104,20 +114,45 @@ IMPORTANT WEBSITE JOURNEY DIFFERENCES
 5. Branding, Bulk Orders, Real Work and Human Help each have distinct purposes. Do not reduce every CTA to the same generic outcome.
 
 YOUR PRIMARY SALES-CONCIERGE FLOW
-Whenever the visitor is willing to discuss a real requirement, prefer collecting the requirement INSIDE CHAT before sending them to Get a Quote.
-Do not rush them to the form. Make the form the final review step.
+Whenever the visitor is willing to discuss a real requirement, prefer collecting the requirement INSIDE CHAT before sending them to Get a Quote. Do not rush them to the form. Make the form the final review step.
 
-Collect progressively, using what is already known:
-A) USE CASE: business/team type and what the uniforms are for.
-B) UNIFORMS & QUANTITY: one or more uniform categories and a valid quantity for EACH selected type (minimum 12 each).
-C) TEAM DETAILS: company/business name when available, industry, project/use, preferred color, deadline, male/female counts and size breakdown if known.
-D) BRANDING: embroidery, printing or "Need ALF recommendation"; logo placement; whether artwork is ready; useful branding notes.
-E) CONTACT: name, phone/WhatsApp, optional email, Kuwait area, preferred follow-up and best contact time.
-F) CONFIRMATION: summarize the complete requirement clearly and ask the visitor to confirm. Only after confirmation should the website fill the Get a Quote form.
+Use this as an INTERNAL coverage order only; NEVER show the order numbers or a progress counter to the visitor:
+1) company/business name
+2) industry
+3) project/team/use case
+4) uniform type(s) and quantity for each type
+5) preferred color
+6) male team members
+7) female team members
+8) size breakdown
+9) deadline
+10) branding method
+11) logo placement
+12) logo/artwork readiness
+13) branding notes
+14) contact name
+15) phone/WhatsApp
+16) email
+17) area in Kuwait
+18) preferred follow-up method
+19) best contact time
+20) final notes
+
+The order is for coverage, not robotic dialogue. Capture useful information whenever the visitor gives it, even if it belongs to a later field, and never ask for it again. After answering the visitor naturally, continue with the earliest unresolved field. If several closely related details arrive in one message, save all of them.
+
+SEMANTIC EXTRACTION MATTERS
+- Understand what the visitor MEANS, not merely what field you happened to be asking for.
+- Example: if you asked for company name and the visitor says "اسمي محمد" / "my name is Mohamed", that is CONTACT NAME, not company. Save name=Mohamed and keep company unresolved.
+- Example: if you asked for branding notes and the visitor says "عربي" / "Arabic", treat it as a language request and do not save it as branding notes.
+- Example: if the visitor says "Polo Shirts" and later gives "88", combine them only when the context clearly makes 88 the quantity for that uniform.
+- Never force an answer into the current field when its meaning belongs somewhere else.
 
 QUESTION STYLE
 - Ask one concise question or one small group of closely related questions per turn. Avoid interrogating the visitor with a long form inside one message.
+- Phrase questions naturally and vary your wording. Do not repeatedly say "I recorded X" / "تم تسجيل X" after every answer. A brief human acknowledgement is enough when useful.
 - Prefer useful grouped questions such as: "How many pieces do you need, and is this for front-of-house, kitchen staff, or both?"
+- When the visitor asks a side question (for example what uniform types are available), answer it fully first, then continue the enquiry naturally instead of repeating the exact same scripted question.
+- During active collection, do not attach generic action buttons to every routine question. Use actions only when they genuinely help that exact moment (for example opening a requested category, showing real work, or handing off to WhatsApp).
 - If sizes are not known, do not block progress. Record only what is known and explain ALF can confirm sizing during follow-up.
 - If the visitor is unsure about branding, use "Need ALF recommendation" rather than guessing.
 - If the visitor gives a quantity below 12 for a uniform type, explain the 12-piece minimum and ask whether they want to adjust the quantity.
@@ -126,15 +161,14 @@ QUESTION STYLE
 - Do not navigate to Get a Quote merely because some quote data exists. Keep collecting in chat until confirmation, unless the visitor explicitly asks to open the form.
 
 WHEN THE REQUIREMENT IS READY FOR CONFIRMATION
-A strong enquiry normally has:
-- at least one uniform with valid quantity >=12,
-- a clear business/team use case,
-- branding choice or "Need ALF recommendation",
-- contact name,
-- phone/WhatsApp,
-- preferred follow-up method.
-Try to collect color, deadline, company, sizes, logo placement/readiness, area and contact time when relevant, but do not fabricate or unnecessarily block the visitor if they genuinely do not know them.
-When enough is known, give a concise summary and ONE quote-update action such as "Confirm & prepare my enquiry". The click is explicit confirmation.
+The final confirmation is allowed only after every field in the internal coverage list has been covered in one of these ways:
+- a real value is known, OR
+- the visitor clearly says they genuinely do not know it yet, OR
+- it is genuinely not applicable / there is no value (for example no extra notes).
+
+If the visitor is reluctant to share a useful field, explain briefly and naturally why it helps the ALF team and ask once more for at least an estimate. Do not shame, threaten, or pressure them. If they genuinely do not have the information, accept that and continue.
+Do not expose field counts or say that you are going through "20 fields". The visitor should feel they are speaking to a helpful employee who happens to be thorough.
+Before confirmation, give a clean, organized summary in the active conversation language and let the visitor review it. The quote-update button is explicit confirmation.
 
 QUOTE DRAFT MEMORY
 CURRENT WEBSITE STATE includes draft_quote. Treat it as the structured memory of the visitor's requirement.
@@ -208,12 +242,14 @@ Return ONLY one valid JSON object:
   ],
   "auto_action":null OR {{"label":"...","type":"navigate|add|enquiry-list|whatsapp","value":"...","follow_up":"..."}},
   "context":{{"lastUniform":"","industry":"","quantity":0}},
-  "draft_quote":{{...complete merged draft so far...}}
+  "draft_quote":{{...complete merged draft so far...}},
+  "collection_updates":{{"field_id":"unknown|none"}}
 }}
-Keep actions to 0-3 genuinely useful choices. Never put quote-update in auto_action. Do not output markdown.
+collection_updates is optional and should contain ONLY fields the visitor explicitly said are genuinely unknown or genuinely not applicable. Do not use it for normal known values; put those in draft_quote.
+Keep actions to 0-3 genuinely useful choices. During routine enquiry collection, actions should usually be empty. Never put quote-update in auto_action. Do not output markdown.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.2.0")
+app = FastAPI(title=APP_NAME, version="1.3.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -255,6 +291,8 @@ class ChatRequest(BaseModel):
     context: AgentContext = Field(default_factory=AgentContext)
     draft_quote: dict[str, Any] = Field(default_factory=dict)
     quote: dict[str, Any] = Field(default_factory=dict)
+    collection: dict[str, Any] = Field(default_factory=dict)
+    conversation_language: str = Field(default="en", max_length=10)
     locale: str = Field(default="en", max_length=20)
 
 
@@ -459,6 +497,24 @@ def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
     return action
 
 
+def _clean_collection_updates(raw: Any) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    allowed_fields = {
+        "company", "industry", "project", "uniforms", "color", "male_count",
+        "female_count", "sizes", "deadline", "branding", "logo_placement",
+        "logo_ready", "branding_notes", "name", "phone", "email", "area",
+        "followup", "contact_time", "notes",
+    }
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        key = str(key).strip()
+        status = str(value).strip().lower()
+        if key in allowed_fields and status in {"unknown", "none"}:
+            out[key] = status
+    return out
+
+
 def _clean_context(raw: Any, fallback: AgentContext) -> dict[str, Any]:
     raw = raw if isinstance(raw, dict) else {}
     last_uniform = str(raw.get("lastUniform", fallback.lastUniform) or "")
@@ -496,7 +552,9 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         "session_context": payload.context.model_dump(),
         "draft_quote": _clean_quote_patch(payload.draft_quote),
         "quote": payload.quote if isinstance(payload.quote, dict) else {},
-        "locale": payload.locale,
+        "collection": payload.collection if isinstance(payload.collection, dict) else {},
+        "conversation_language": "ar" if str(payload.conversation_language).lower().startswith("ar") else "en",
+        "site_locale": payload.locale,
     }
 
     messages: list[dict[str, str]] = [
@@ -509,27 +567,69 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     messages.extend({"role": m.role, "content": m.content} for m in payload.messages[-24:])
 
     try:
-        client = Groq(api_key=GROQ_API_KEY)
-        completion = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            temperature=0.25,
-            max_completion_tokens=900,
-            response_format={"type": "json_object"},
-        )
+        # GPT-OSS is a reasoning model. Explicitly hide reasoning so JSON mode
+        # only has to produce the final JSON object in message.content.
+        client = Groq(api_key=GROQ_API_KEY, timeout=35.0, max_retries=1)
+
+        request_kwargs = {
+            "model": MODEL,
+            "messages": messages,
+            "temperature": 0.45,
+            "max_completion_tokens": 1100,
+            "include_reasoning": False,
+        }
+
+        try:
+            completion = client.chat.completions.create(
+                **request_kwargs,
+                response_format={"type": "json_object"},
+            )
+        except Exception as first_exc:
+            # Keep the real provider error visible in Render logs.
+            # The storefront still receives a safe generic error if both attempts fail.
+            first_message = str(first_exc)
+            print(
+                f"[Groq primary request failed] {type(first_exc).__name__}: {first_message}",
+                flush=True,
+            )
+
+            # Groq/model JSON-mode compatibility can occasionally reject a request.
+            # Our prompt already requires one JSON object, so retry once without the
+            # response_format constraint only for format/reasoning-related 400s.
+            lower = first_message.lower()
+            retry_without_json_mode = (
+                "response_format" in lower
+                or "json mode" in lower
+                or "json_object" in lower
+                or "reasoning" in lower
+                or "badrequest" in type(first_exc).__name__.lower()
+                or "400" in lower
+            )
+            if not retry_without_json_mode:
+                raise
+
+            completion = client.chat.completions.create(**request_kwargs)
+
         content = completion.choices[0].message.content or ""
         data = _safe_json(content)
     except HTTPException:
         raise
     except Exception as exc:
-        # Do not leak keys or provider internals to the storefront.
+        # Print the exact cause to Render logs for diagnosis. Never expose secrets
+        # or provider internals to the public storefront response.
+        print(f"[Groq final failure] {type(exc).__name__}: {exc}", flush=True)
+        traceback.print_exc()
         raise HTTPException(status_code=502, detail="The AI service is temporarily unavailable.") from exc
 
     reply = str(data.get("reply", "")).strip()[:3000]
     if not reply:
-        reply = "I can help you choose the right ALF uniform and continue the correct enquiry flow."
+        if str(payload.conversation_language).lower().startswith("ar"):
+            reply = "أكيد، أقدر أساعدك تختار اليونيفورم المناسب ونكمّل طلبك خطوة بخطوة بطريقة بسيطة."
+        else:
+            reply = "I can help you choose the right ALF uniform and build the enquiry with you naturally."
 
     draft_quote = _merge_quote_patch(payload.draft_quote, data.get("draft_quote"))
+    collection_updates = _clean_collection_updates(data.get("collection_updates"))
 
     actions = []
     for raw in (data.get("actions") or [])[:3]:
@@ -551,5 +651,6 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         "auto_action": auto_action,
         "context": context,
         "draft_quote": draft_quote,
+        "collection_updates": collection_updates,
         "model": MODEL,
     }
