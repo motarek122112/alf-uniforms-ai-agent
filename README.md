@@ -1,28 +1,28 @@
-# ALF Backend V4.3 — JSON Reliability Fix
+# ALF Groq AI Agent Backend V10 — Natural Dialogue + Deterministic Memory
 
-# ALF Groq AI Backend V4.2 — Rate Limit / 502 Resilience
+This version separates **conversation quality** from **enquiry memory**.
 
-This build keeps the same `/api/chat` contract used by the Shopify theme.
+The AI is free to answer naturally in Arabic or English, while the storefront/backend keeps the structured enquiry state separately. The model is no longer forced to generate a JSON object containing both dialogue and state on every message.
 
-Changes:
-- compact prompt and only last 10 chat messages are sent to Groq to reduce TPM usage
-- primary model remains `openai/gpt-oss-20b` by default
-- automatic fallback to `groq/compound-mini` on provider 429/5xx/capacity/timeout errors
-- lower max completion tokens and low reasoning effort for GPT-OSS
-- clearer Render logs showing provider status/model
+## Why this fixes the bad conversation loop
+- The model returns normal conversational text only.
+- Obvious facts are captured deterministically before the AI call, so `100`, `نعم`, `لا`, company name, project context, etc. do not disappear.
+- `collection.current_field` is only a hint to the assistant, not a hard scripted step.
+- Arabic remains the active language until the visitor clearly switches language.
+- Repeated company / industry / quantity questions are blocked by persistent structured state.
+- Formal pilot requirements are handled as `Custom Uniform`, not incorrectly presented as standard Polo/Workwear pilot uniforms.
+- Provider failure falls back to `openai/gpt-oss-20b`; if both fail, the local state-aware assistant still keeps the conversation moving.
 
-Environment variables:
-- `GROQ_API_KEY` required
-- `GROQ_MODEL` optional, default `openai/gpt-oss-20b`
-- `GROQ_FALLBACK_MODEL` optional, default `groq/compound-mini`
-- `ALLOWED_ORIGINS` optional, default `https://alf-uniforms.myshopify.com`
-- `RATE_LIMIT_PER_MINUTE` optional, default `30`
+## Recommended Render environment
 
-Deploy by replacing the backend repository files and triggering a Render deploy. No Shopify theme change is required if it already points to the same Render URL.
+```text
+GROQ_MODEL=qwen/qwen3.6-27b
+GROQ_FALLBACK_MODEL=openai/gpt-oss-20b
+```
 
+Keep your existing `GROQ_API_KEY`.
 
-## V4.3 fix
-- Avoids provider-side JSON mode on normal chat calls, preventing intermittent Groq `json_validate_failed` / `Failed to generate JSON` 400 errors.
-- If the model still returns malformed JSON text, the backend automatically performs one zero-temperature JSON repair pass.
-- Keeps the 429/capacity fallback model behavior.
-- No Shopify theme change is required; the `/api/chat` contract remains the same.
+## Deploy
+Replace the backend repository files with this package, commit/push, and let the same Render service redeploy.
+
+After deployment `/health` should report version `2.0.0` and architecture `natural-dialogue-deterministic-memory`.
