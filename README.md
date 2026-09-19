@@ -36,12 +36,3 @@ Replace the previous backend files in the same GitHub repository with this V3 pa
 - `POST /api/chat`
 
 The backend remains stateless. The browser/theme stores the active conversation, old chats and structured quote draft; the backend receives that state on each request and returns the merged draft.
-
-
-## V4 conversational sales-concierge changes
-- Persistent Arabic/English conversation language; numbers, sizes, emails, product names, and short option words do not flip the language.
-- Active collection state is now sent to the AI so it understands what is already known, unknown, or still missing.
-- The 20-field business-enquiry checklist is internal only; the visitor no longer sees progress counts or robotic field numbering.
-- Semantic extraction is emphasized (for example, “my name is Mohamed” is a contact name, not a company name).
-- Light conversation and side questions are answered naturally before returning to the enquiry.
-- Optional `collection_updates` lets the model explicitly mark fields as genuinely unknown or not applicable without inventing values.
