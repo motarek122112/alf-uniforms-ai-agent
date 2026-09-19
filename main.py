@@ -101,6 +101,47 @@ You may return UI actions. Allowed action types:
 - enquiry-list: opens the saved enquiry list; no value required.
 - whatsapp: value is a short message to ALF staff.
 - prompt: value is a suggested user message for the chat.
+- quote-update: a CONFIRMATION action that carries a structured patch for the Get a Quote form. Never auto-execute quote-update.
+
+QUOTE FORM ASSISTANCE — VERY IMPORTANT
+The assistant can help fill the real Get a Quote form from the visitor's natural-language conversation, but ONLY after explicit confirmation.
+When the visitor gives concrete quotation details that match one or more fields below:
+1. Extract ONLY information the visitor actually stated or clearly confirmed. Never guess missing values.
+2. Reply with a concise summary of what you understood and ask the visitor to confirm before applying it.
+3. Include ONE quote-update action labelled naturally, e.g. "Confirm & fill my quote". The button click is the confirmation.
+4. Do NOT put quote-update in auto_action. Do NOT silently edit the form.
+5. If the visitor states a per-uniform quantity below 12, explain ALF's 12-piece minimum and do not treat that invalid quantity as confirmed.
+6. If the visitor is already on Get a Quote, use CURRENT WEBSITE STATE.quote to understand what is already filled and patch only what should change.
+7. If they are elsewhere, confirmation can take them to Get a Quote and carry the confirmed details into the form.
+
+Allowed quote patch structure:
+{{
+  "uniforms": [{{"name":"Polo Shirts & T-Shirts","qty":24}}],
+  "company":"...",
+  "industry":"Restaurant / Café|Corporate Office|Security|Retail|Events / Promotions|Service / Operations|Other",
+  "project":"...",
+  "color":"...",
+  "deadline":"...",
+  "male_count": 0,
+  "female_count": 0,
+  "sizes": {{"S":0,"M":0,"L":0,"XL":0,"XXL":0,"Other":0}},
+  "branding":"Embroidery|Printing|Need ALF recommendation",
+  "logo_placement":"...",
+  "logo_ready":"Yes — ready to send on WhatsApp|No — need guidance",
+  "branding_notes":"...",
+  "name":"...",
+  "phone":"...",
+  "email":"...",
+  "area":"...",
+  "followup":"WhatsApp|Phone call|Arrange a meeting",
+  "contact_time":"...",
+  "notes":"..."
+}}
+Omit every field the visitor did not provide. A uniform may be included with qty 0 only when the visitor selected that uniform but has not provided a valid quantity yet.
+If exactly one saved/selected uniform exists and the visitor clearly gives one quantity for that uniform, you may attach that quantity to it. If multiple uniforms exist, never invent how a single total quantity should be divided.
+If the visitor says "fill the quote", "put this in the form", or equivalent after giving details across the conversation, gather only the confirmed details from the conversation and return the confirmation action.
+
+Example behavior: visitor says "We need 24 polo shirts in navy for ABC, embroidery on the left chest, contact me on WhatsApp." Reply with a short summary and a quote-update action whose patch contains Polo Shirts & T-Shirts qty 24, company ABC, color Navy, branding Embroidery, logo_placement Left chest, and followup WhatsApp. Do not apply it without the confirmation click.
 
 If the user explicitly asks you to open/go to a page, add a uniform, open the enquiry list, or contact WhatsApp, you may set ONE auto_action matching that explicit request. Do not auto-execute a purchase-like commitment. Adding to an enquiry list is allowed because it is only a shortlist.
 
@@ -118,14 +159,18 @@ OUTPUT
 Return ONLY a valid JSON object with this exact top-level structure:
 {{
   "reply": "short helpful answer",
-  "actions": [{{"label":"...","type":"navigate|add|enquiry-list|whatsapp|prompt","value":"..."}}],
+  "actions": [
+    {{"label":"...","type":"navigate|add|enquiry-list|whatsapp|prompt","value":"..."}}
+    OR
+    {{"label":"Confirm & fill my quote","type":"quote-update","patch":{{...allowed quote patch fields...}}}}
+  ],
   "auto_action": null OR {{"label":"...","type":"navigate|add|enquiry-list|whatsapp","value":"..."}},
   "context": {{"lastUniform":"","industry":"","quantity":0}}
 }}
-Keep actions to 0-3 useful choices. Do not output markdown.
+Keep actions to 0-3 useful choices. Never put quote-update in auto_action. Do not output markdown.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.0.0")
+app = FastAPI(title=APP_NAME, version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -165,6 +210,7 @@ class ChatRequest(BaseModel):
     page: PageState = Field(default_factory=PageState)
     enquiry: list[EnquiryItem] = Field(default_factory=list, max_length=20)
     context: AgentContext = Field(default_factory=AgentContext)
+    quote: dict[str, Any] = Field(default_factory=dict)
     locale: str = Field(default="en", max_length=20)
 
 
@@ -204,17 +250,127 @@ def _valid_navigation(value: str) -> bool:
     return value in ROUTES.values()
 
 
-def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, str] | None:
+def _clean_quote_patch(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+
+    patch: dict[str, Any] = {}
+    quote_uniforms = set(UNIFORMS + ["Corporate Shirts", "Other"])
+
+    uniforms = []
+    if isinstance(raw.get("uniforms"), list):
+        for item in raw.get("uniforms", [])[:12]:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if name not in quote_uniforms:
+                continue
+            try:
+                qty = int(item.get("qty", 0) or 0)
+            except Exception:
+                qty = 0
+            # 0 means selected but quantity still unknown. 1-11 is invalid for ALF MOQ.
+            if 0 < qty < 12:
+                qty = 0
+            qty = max(0, min(qty, 100000))
+            uniforms.append({"name": name, "qty": qty})
+    if uniforms:
+        patch["uniforms"] = uniforms
+
+    def put_text(key: str, limit: int = 500) -> None:
+        value = raw.get(key)
+        if value is None:
+            return
+        text = str(value).strip()
+        if text:
+            patch[key] = text[:limit]
+
+    for key, limit in {
+        "company": 180,
+        "project": 1000,
+        "color": 160,
+        "deadline": 180,
+        "logo_placement": 220,
+        "branding_notes": 1000,
+        "name": 160,
+        "phone": 100,
+        "email": 220,
+        "area": 180,
+        "contact_time": 180,
+        "notes": 1200,
+    }.items():
+        put_text(key, limit)
+
+    allowed_industries = {
+        "Restaurant / Café", "Corporate Office", "Security", "Retail",
+        "Events / Promotions", "Service / Operations", "Other"
+    }
+    industry = str(raw.get("industry", "")).strip()
+    if industry in allowed_industries:
+        patch["industry"] = industry
+
+    allowed_branding = {"Embroidery", "Printing", "Need ALF recommendation"}
+    branding = str(raw.get("branding", "")).strip()
+    if branding in allowed_branding:
+        patch["branding"] = branding
+
+    allowed_logo_ready = {"Yes — ready to send on WhatsApp", "No — need guidance"}
+    logo_ready = str(raw.get("logo_ready", "")).strip()
+    if logo_ready in allowed_logo_ready:
+        patch["logo_ready"] = logo_ready
+
+    allowed_followup = {"WhatsApp", "Phone call", "Arrange a meeting"}
+    followup = str(raw.get("followup", "")).strip()
+    if followup in allowed_followup:
+        patch["followup"] = followup
+
+    for key in ("male_count", "female_count"):
+        if key in raw:
+            try:
+                num = int(raw.get(key, 0) or 0)
+            except Exception:
+                continue
+            patch[key] = max(0, min(num, 100000))
+
+    if isinstance(raw.get("sizes"), dict):
+        sizes: dict[str, int] = {}
+        for label in ("S", "M", "L", "XL", "XXL", "Other"):
+            if label not in raw["sizes"]:
+                continue
+            try:
+                num = int(raw["sizes"].get(label, 0) or 0)
+            except Exception:
+                continue
+            sizes[label] = max(0, min(num, 100000))
+        if sizes:
+            patch["sizes"] = sizes
+
+    return patch
+
+
+def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     atype = str(raw.get("type", "")).strip()
     label = str(raw.get("label", "")).strip()[:80]
     value = str(raw.get("value", "")).strip()[:500]
-    allowed = {"navigate", "add", "enquiry-list", "whatsapp"}
+    allowed = {"navigate", "add", "enquiry-list", "whatsapp", "quote-update"}
     if allow_prompt:
         allowed.add("prompt")
     if atype not in allowed:
         return None
+
+    if atype == "quote-update":
+        patch = _clean_quote_patch(raw.get("patch"))
+        if not patch:
+            return None
+        return {
+            "label": label or "Confirm & fill my quote",
+            "type": "quote-update",
+            "value": "",
+            "patch": patch,
+        }
+
     if not label:
         label = {
             "navigate": "Open page",
@@ -271,6 +427,7 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         "current_page": payload.page.model_dump(),
         "saved_enquiry_uniforms": enquiry_names,
         "session_context": payload.context.model_dump(),
+        "quote": payload.quote if isinstance(payload.quote, dict) else {},
         "locale": payload.locale,
     }
 
@@ -311,6 +468,8 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
             actions.append(cleaned)
 
     auto_action = _clean_action(data.get("auto_action"), allow_prompt=False) if data.get("auto_action") else None
+    if auto_action and auto_action.get("type") == "quote-update":
+        auto_action = None
     context = _clean_context(data.get("context"), payload.context)
 
     return {
