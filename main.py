@@ -11,8 +11,8 @@ from groq import Groq
 from pydantic import BaseModel, Field
 
 APP_NAME = "ALF Uniforms AI Agent"
-MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
-FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
+MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.6-27b")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
 DEFAULT_ORIGINS = "https://alf-uniforms.myshopify.com"
@@ -61,58 +61,53 @@ STATIC_ROUTES = {
 SYSTEM_PROMPT = f"""
 You are ALF Digital Sales Concierge for ALF Uniforms in Kuwait.
 
-You should feel like a capable human sales/customer-success employee having a real conversation, not a form, wizard, or scripted chatbot.
+Your job is to sound like a capable human sales/customer-success employee while the storefront itself handles data collection, navigation, buttons, and quotation-form filling.
 
-CORE STYLE
-- Respond to what the visitor actually said first. Do not ignore a question just because an enquiry detail is still missing.
-- Be warm, concise, practical, and natural. Usually 1-3 short sentences is enough.
-- Vary your wording. Do not repeat phrases such as “Got it”, “I recorded that”, or the same question template every turn.
-- Short replies such as “نعم”, “اه”, “تمام”, “لا”, “100”, a size, a color, or a product name must be interpreted from the immediately preceding conversation and CURRENT WEBSITE STATE. Never treat them as unrelated just because they are short.
-- Small talk, corrections, jokes, “ركز”, “كمل”, “اسمع”, and ordinary conversational detours are fine. Reply naturally. Only say you lack information when the topic is genuinely unrelated to ALF or the website.
-- If the visitor corrects you, accept the correction immediately and continue from the corrected state.
+CONVERSATION STYLE
+- Respond naturally to what the visitor actually said. Be warm, concise, practical, and human.
+- Usually use 1-3 short sentences. Avoid repetitive phrases such as “Got it”, “I recorded that”, or canned support language.
+- Small talk, corrections, “ركز”, “كمل”, “اسمع”, jokes, and brief conversational detours are fine. Reply normally.
+- Short replies such as “نعم”, “اه”, “تمام”, “لا”, a number, size, color, product name, “Printing”, “call”, etc. must be interpreted from the conversation and CURRENT WEBSITE STATE.
+- Do not act like a form or numbered wizard. Never mention field numbers, progress counters, internal states, schemas, or implementation details.
 
 LANGUAGE
 - CURRENT WEBSITE STATE.conversation_language is authoritative.
-- If it is ar, reply in natural, clear Arabic suitable for customers in Kuwait. Understand both Gulf/Kuwaiti and Egyptian wording. Do not suddenly answer in English because the visitor typed a number, email, size, color, product name, “Printing”, “call”, “WhatsApp”, yes/no, etc.
+- If it is ar, reply in clear natural Arabic suitable for customers in Kuwait. Understand Egyptian and Gulf wording. Do not switch to English because the visitor typed a number, email, size, product name, color, or one English field value.
 - If it is en, reply in natural professional English.
-- Product/category names may remain in their official English names inside Arabic sentences when useful.
-- Explicit “عربي/بالعربي” or “English please” changes language only; it is never enquiry data.
+- Only an explicit language request or a clearly sustained sentence in the other language should switch the conversation language.
 
-MEMORY / STATE
-- CURRENT WEBSITE STATE is the source of truth for facts already collected. The storefront records obvious answers BEFORE this request reaches you.
-- Never ask again for a value already present in draft_quote or already resolved in collection.resolved.
-- collection.current_field is only the next useful missing detail. It is not a command to behave like a form.
-- If the latest message just answered the previous question and the state has advanced, acknowledge naturally and move to the next useful detail without restarting the conversation.
-- If the visitor volunteers multiple facts at once, use all of them and do not re-ask them later.
+IMPORTANT ORCHESTRATION RULE
+- The storefront, NOT you, asks the next missing enquiry question and decides when to show confirmation.
+- Therefore, when CURRENT WEBSITE STATE.collection.active is true, do NOT ask the visitor any new enquiry-data questions yourself. Answer/acknowledge the visitor naturally and stop. The storefront will append exactly one next question.
+- Do not ask several questions in one response.
+- Do not repeat information already present in CURRENT WEBSITE STATE.draft_quote or collection.resolved.
 
-SALES / ENQUIRY GOAL
-Quietly build a complete business enquiry in the background while keeping the conversation human. Eventually resolve:
-company, industry, project/team/use, uniform type(s) + quantity per type, color, male count, female count, sizes, deadline, branding, logo placement, logo readiness, branding notes, contact name, phone/WhatsApp, email, Kuwait area, preferred follow-up, best contact time, notes.
-Never expose this list, field numbers, 1/20 counters, progress, or internal collection logic.
-If the visitor does not know a detail, accept that. If they simply do not want to share a useful detail, explain once in a friendly way why it helps the ALF team and ask for an estimate; do not pressure them repeatedly.
+AGENT ACTIONS / WEBSITE CONTROL
+- Never invent URLs, quote IDs, order IDs, or pretend you already navigated, submitted, saved, or filled a form.
+- If the visitor asks to open a page, go to Get a Quote, show real work, or navigate somewhere, acknowledge naturally but do not provide a made-up link. The storefront action layer will perform the navigation.
+- If the visitor asks to go to the quotation page before the enquiry is complete, do not claim it is ready. The storefront will continue collecting the missing details first.
 
-ALF FACTS
+SALES / ENQUIRY CONTEXT
+The storefront quietly builds a complete business enquiry in this order:
+company, industry, project/team/use, uniform type(s) + quantity per type, color, male count, female count, size breakdown, deadline, branding, logo placement, logo/artwork readiness, branding notes, contact name, phone/WhatsApp, email, Kuwait area, preferred follow-up, best contact time, notes.
+You may use these facts to understand context, but do not expose the list or its order.
+If the visitor does not know a detail, that is acceptable. If they are reluctant to share, the storefront may explain once why it helps the ALF team.
+
+ALF FACTS / SAFETY
 - ALF supplies custom uniforms for organizations and teams in Kuwait.
-- The website is quotation/enquiry based, not fixed-price ecommerce.
+- The site is enquiry/quotation based, not fixed-price ecommerce.
 - Minimum order starts from 12 pieces per uniform type.
-- Never invent price, stock, production time, delivery promise, fabric specification, client name, or completed project proof.
 - Available catalog categories: {json.dumps(UNIFORMS, ensure_ascii=False)}.
-- If the need does not fit a listed category, use the idea of a Custom Uniform enquiry rather than forcing the wrong category.
-- For formal airline pilots specifically, do NOT claim Polo Shirts or Workwear are the standard pilot uniform. Treat a formal pilot requirement as Custom Uniform. Ground crew can be Workwear or Polo depending on the role.
-- Branding options include embroidery and printing; recommend based on the garment/use only when enough context exists.
+- If the requirement does not fit a listed category, use Custom Uniform rather than forcing a wrong category.
+- For formal airline pilots, do NOT claim Polo Shirts or Workwear are the standard pilot uniform. Treat a formal pilot requirement as Custom Uniform. Ground crew can be Workwear or Polo depending on role.
+- Branding options include embroidery and printing.
+- Never invent price, stock, fabric specification, client names, completed-project proof, production duration, or delivery guarantees.
+- If a visitor gives an urgent deadline such as “tomorrow”, treat it as a requested target only. Say ALF must confirm feasibility; never promise it will be ready.
 
-HOW TO MOVE THE CONVERSATION FORWARD
-- If the visitor asks for a recommendation, recommend first and explain briefly why. Then ask one natural follow-up if useful.
-- If they ask “what is available?”, answer the available options first, then continue naturally.
-- If they answer the current missing detail, do not merely say “recorded”. Use a human bridge into the next question.
-- Ask one question at a time unless two details naturally belong together.
-- Do not ask for company/industry/project again if known.
-- Do not offer final confirmation yourself; the storefront handles final confirmation when all required information is resolved.
-
-Return ONLY the conversational reply text. Do not return JSON, field names, hidden state, or implementation notes.
+Return ONLY the conversational reply text. No JSON, no markdown links, no URLs, no hidden state, and no implementation notes.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="2.0.0")
+app = FastAPI(title=APP_NAME, version="2.1.0")
 # Shopify can serve the same uploaded theme from the myshopify domain, a custom
 # storefront domain, and preview/editor hosts. CORS is not authentication here;
 # the API is already public, while the Groq key remains server-side. Allow HTTPS
@@ -263,7 +258,7 @@ def _clean_quote_patch(raw: Any) -> dict[str, Any]:
         put_text(key, limit)
 
     allowed_industries = {
-        "Restaurant / Café", "Corporate Office", "Security", "Retail",
+        "Restaurant / Café", "Corporate Office", "Engineering", "Security", "Retail",
         "Events / Promotions", "Service / Operations", "Other"
     }
     industry = str(raw.get("industry", "")).strip()
@@ -368,6 +363,7 @@ def _extract_company_name(text: str) -> str:
     patterns = [
         r"^(?:اسم\s+شركتي|اسم\s+(?:الشركة|الشركه)|(?:الشركة|الشركه)\s+اسمها|شركتي\s+اسمها|اسمها)\s*[:\-]?\s*(.+)$",
         r"^(?:عندي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)(?:\s+اسمها)?\s+(.+)$",
+        r"(?:^|\s)اسمها\s+(?:شركة|شركه|مؤسسة|موسسه)?\s*(.+)$",
         r"^(?:شركة|شركه|مؤسسة|موسسة)\s+(.+)$",
         r"^(?:أنا|انا)\s+.+?\s+(?:وعندي|عندي|ولدي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)(?:\s+اسمها)?\s+(.+)$",
         r"^(?:my\s+company(?:\s+name)?\s+is|company(?:\s+name)?\s+is|business(?:\s+name)?\s+is)\s+(.+)$",
@@ -385,6 +381,8 @@ def _normalize_industry_text(text: str) -> str:
     t = (text or "").strip().lower()
     if not t:
         return ""
+    if re.search(r"engineering|engineer|هندسه|هندسة|مهندسين", t, flags=re.I):
+        return "Engineering"
     if re.search(r"airport|airline|aviation|air transport|مطار|مطارات|طيران|شركة طيران|طيران مدني|hospital|healthcare|clinic|مستشفى|مستوصف|عيادة|school|university|education|مدرسة|جامعة|تعليم|construction|contracting|مقاولات|إنشاءات|انشاءات|hotel|فندق|other|أخرى|اخرى", t, flags=re.I):
         return "Other"
     if re.search(r"restaurant|cafe|café|food|hospitality|مطعم|كافيه|ضيافة", t, flags=re.I):
@@ -412,6 +410,9 @@ def _extract_project_hint(text: str) -> str:
         return "طيارين رسميين" if re.search(r"[\u0600-\u06FF]", t) else "Formal pilots"
     if re.search(r"(?:يونيفورمات?|يونيفرمات?|ازياء|أزياء|زي)\s+(?:ل)?(?:طيارين|طيار)|(?:فريق|الفريق)\s+(?:بيشتغل|يشتغل|هو)\s+(?:طيارين|طيار)", t, flags=re.I):
         return "طيارين" if re.search(r"[\u0600-\u06FF]", t) else "Pilots"
+    direct_role = re.search(r"(?:يونيفورمات?|يونيفرمات?|ازياء|أزياء|ملابس\s+عمل|زي)\s+(?:ل)?(عمال|العمال|موظفين|الموظفين|شيفات|الشيفات|امن|أمن|حراس)(?:\s|$)", t, flags=re.I)
+    if direct_role:
+        return re.sub(r"^ال", "", direct_role.group(1).strip(), flags=re.I)[:160]
     patterns = [
         r"(?:ل|لل)\s*(طيارين|الطيارين|عمال|العمال|موظفين|الموظفين|شيفات|الشيفات|امن|أمن|حراس|فريق مبيعات|استقبال)(?:\s|$)",
         r"(?:فريق|الفريق)\s+(?:بيشتغل|يشتغل|هو)\s+(طيارين|عمال|موظفين|شيفات|امن|أمن|حراس)(?:\s|$)",
@@ -427,8 +428,8 @@ def _extract_project_hint(text: str) -> str:
 def _extract_team_counts(text: str) -> dict[str, int]:
     t = re.sub(r"[,،]", " ", (text or "").lower())
     out: dict[str, int] = {}
-    male_patterns = [r"(\d{1,5})\s*(?:ذكر|ذكور|رجل|رجال|male|men)", r"(?:ذكر|ذكور|رجل|رجال|male|men)\s*(\d{1,5})"]
-    female_patterns = [r"(\d{1,5})\s*(?:انثى|أنثى|انثي|أنثي|إناث|نساء|female|women)", r"(?:انثى|أنثى|انثي|أنثي|إناث|نساء|female|women)\s*(\d{1,5})"]
+    male_patterns = [r"(\d{1,5})\s*(?:ذكر|ذكور|رجل|رجال|رجاله|رجالة|male|men)", r"(?:ذكر|ذكور|رجل|رجال|رجاله|رجالة|male|men)\s*(\d{1,5})"]
+    female_patterns = [r"(\d{1,5})\s*(?:انثى|أنثى|انثي|أنثي|إناث|نساء|بنت|بنات|female|women)", r"(?:انثى|أنثى|انثي|أنثي|إناث|نساء|بنت|بنات|female|women)\s*(\d{1,5})"]
     for pat in male_patterns:
         m = re.search(pat, t, flags=re.I)
         if m:
@@ -655,11 +656,11 @@ def _looks_like_uniform_intent(text: str) -> bool:
         return False
     if t in {"زي", "ازياء", "أزياء", "يونيفورم", "يونيفورمات", "uniform", "uniforms"}:
         return True
-    return bool(re.search(
-        r"(?:^|\s)(?:ابي|أبي|ابغى|أبغى|اريد|أريد|عايز|محتاج|احتاج|أحتاج|need|want)\s+(?:لي\s+)?(?:زي|ازياء|أزياء|يونيفورم|يونيفورمات|uniform|uniforms|ملابس\s+عمل)(?:\s|$)",
-        t,
-        flags=re.I,
-    ))
+    if re.search(r"(?:^|\s)(?:ابي|أبي|ابغى|أبغى|اريد|أريد|عايز|محتاج|احتاج|أحتاج|need|want)\s+(?:لي\s+)?(?:زي|ازياء|أزياء|يونيفورم|يونيفورمات|uniform|uniforms|ملابس\s+عمل)(?:\s|$)", t, flags=re.I):
+        return True
+    if re.search(r"(?:ازياء|أزياء|يونيفورمات?|ملابس\s+عمل)\s+(?:عمال|موظفين|طيارين|شيفات|امن|أمن|فريق)", t, flags=re.I):
+        return True
+    return bool(re.search(r"uniforms?\s+(?:for|for my|for our)\s+", t, flags=re.I))
 
 
 def _is_greeting(text: str) -> bool:
@@ -875,6 +876,35 @@ def _natural_local_reply(payload: "ChatRequest", reason: str = "") -> dict[str, 
         return pack(reply, actions)
     return pack("فاهمك. كمل لي الفكرة براحتك وأنا أرد عليك على نفس النقطة، ونرتب تفاصيل الطلب أثناء الكلام بدون ما نحولها لاستبيان." if ar else "I’m with you. Keep going and I’ll respond to the point you’re making; we can collect the order details naturally along the way.")
 
+def _sanitize_reply_text(reply: str, payload: ChatRequest) -> str:
+    text = (reply or "").strip()
+    text = text.replace("&#x20;", " ").replace("\\-", "-")
+    # Never let the model invent clickable destinations or fake quote/order URLs.
+    text = re.sub(r"\[([^\]]+)\]\((?:https?://|/)[^)]+\)", r"\1", text, flags=re.I)
+    text = re.sub(r"https?://\S+", "", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    latest = payload.messages[-1].content if payload.messages else ""
+    ar = payload.conversation_language == "ar"
+    urgent = bool(re.search(r"(?:بكره|بكرة|غدًا|غدا|tomorrow|today|اليوم|النهارده)", latest, flags=re.I))
+    promise = bool(re.search(
+        r"(?:سنجهز|سوف\s+نجهز|سيكون\s+جاهز|هتكون\s+جاهز|هتكون\s+جاهزة|جاهز\s+للتسليم|ready\s+(?:by|for)|will\s+be\s+ready|we(?:'|’)ll\s+(?:have|prepare).*ready)",
+        text,
+        flags=re.I,
+    ))
+    if urgent and promise:
+        text = ("تمام، أسجل هذا كموعد مستهدف، لكن فريق ALF لازم يؤكد إمكانية التنفيذ بعد مراجعة الكمية والتخصيص."
+                if ar else
+                "I’ll treat that as your target deadline, but the ALF team still needs to confirm feasibility after reviewing the quantity and customization.")
+
+    # A provider should never claim a website action happened; the storefront owns actions.
+    if re.search(r"(?:أعددنا\s+عرض\s+السعر|جهزت\s+عرض\s+السعر|تم\s+فتح|فتحت\s+لك|لقد\s+أعددنا|your\s+quote\s+is\s+ready|i(?:'|’)ve\s+opened|i\s+opened)", text, flags=re.I):
+        if re.search(r"(?:quote|quotation|عرض\s+السعر|الكوت|صفحة)", latest, flags=re.I):
+            text = "أكيد — أقدر أوصلك للمسار الصحيح، والموقع نفسه هيكمل الخطوة المناسبة من هنا." if ar else "Absolutely — I can take you to the right flow, and the website will handle the next step from here."
+
+    return text[:2400]
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {"service": APP_NAME, "status": "online", "model": MODEL}
@@ -882,7 +912,7 @@ def root() -> dict[str, str]:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "version": "2.0.0", "architecture": "natural-dialogue-deterministic-memory", "model": MODEL, "ai_configured": bool(GROQ_API_KEY)}
+    return {"status": "ok", "version": "2.1.0", "architecture": "agent-orchestrated-natural-dialogue", "model": MODEL, "ai_configured": bool(GROQ_API_KEY)}
 
 
 @app.post("/api/chat")
@@ -927,14 +957,14 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": 0.72,
-            "max_completion_tokens": 480,
+            "temperature": 0.55,
+            "max_completion_tokens": 320,
         }
         # Qwen's non-thinking mode is better suited to a quick natural sales conversation.
         if model.startswith("qwen/"):
-            kwargs.update({"reasoning_effort": "none", "top_p": 0.8})
+            kwargs.update({"reasoning_effort": "none", "top_p": 0.75})
         elif model.startswith("openai/gpt-oss"):
-            kwargs.update({"reasoning_effort": "low"})
+            kwargs.update({"reasoning_effort": "low", "top_p": 0.9})
         completion = client.chat.completions.create(**kwargs)
         return (completion.choices[0].message.content or "").strip()
 
@@ -963,7 +993,7 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     reply = reply.strip()
     if len(reply) >= 2 and reply[0] == reply[-1] == '"':
         reply = reply[1:-1].strip()
-    reply = reply[:3000]
+    reply = _sanitize_reply_text(reply, payload)
 
     return {
         "reply": reply,

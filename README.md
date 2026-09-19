@@ -1,28 +1,30 @@
-# ALF Groq AI Agent Backend V10 — Natural Dialogue + Deterministic Memory
+# ALF Groq AI Agent Backend V11 — Agent Orchestrator
 
-This version separates **conversation quality** from **enquiry memory**.
+This build keeps the AI conversational while the Shopify theme owns the reliable agent behavior.
 
-The AI is free to answer naturally in Arabic or English, while the storefront/backend keeps the structured enquiry state separately. The model is no longer forced to generate a JSON object containing both dialogue and state on every message.
-
-## Why this fixes the bad conversation loop
-- The model returns normal conversational text only.
-- Obvious facts are captured deterministically before the AI call, so `100`, `نعم`, `لا`, company name, project context, etc. do not disappear.
-- `collection.current_field` is only a hint to the assistant, not a hard scripted step.
-- Arabic remains the active language until the visitor clearly switches language.
-- Repeated company / industry / quantity questions are blocked by persistent structured state.
-- Formal pilot requirements are handled as `Custom Uniform`, not incorrectly presented as standard Polo/Workwear pilot uniforms.
-- Provider failure falls back to `openai/gpt-oss-20b`; if both fail, the local state-aware assistant still keeps the conversation moving.
+## What changed
+- `openai/gpt-oss-20b` is the default production model; `qwen/qwen3.6-27b` is fallback.
+- The model does **not** control navigation, quote submission, form filling, or the next required field.
+- The model answers naturally in the active language; the storefront appends exactly one next enquiry question when required.
+- The model is explicitly forbidden from inventing URLs, quote IDs, order IDs, delivery guarantees, or pretending a page/form action already happened.
+- Urgent dates such as “tomorrow” are treated as requested targets only; ALF still has to confirm feasibility.
+- Improved Arabic context extraction for workers, engineering, company naming, girls/women and men counts.
+- Provider replies are cleaned before reaching the storefront.
 
 ## Recommended Render environment
 
 ```text
-GROQ_MODEL=qwen/qwen3.6-27b
-GROQ_FALLBACK_MODEL=openai/gpt-oss-20b
+GROQ_MODEL=openai/gpt-oss-20b
+GROQ_FALLBACK_MODEL=qwen/qwen3.6-27b
 ```
 
-Keep your existing `GROQ_API_KEY`.
+Keep the existing `GROQ_API_KEY` and Render URL.
 
 ## Deploy
-Replace the backend repository files with this package, commit/push, and let the same Render service redeploy.
+Replace the current backend repository files with this package, commit/push, and let the same Render service redeploy.
 
-After deployment `/health` should report version `2.0.0` and architecture `natural-dialogue-deterministic-memory`.
+After deployment `/health` should report:
+
+```json
+{"version":"2.1.0","architecture":"agent-orchestrated-natural-dialogue"}
+```
