@@ -1,45 +1,19 @@
-# ALF Uniforms AI Agent Backend V2
+# ALF Groq AI Backend V4.2 — Rate Limit / 502 Resilience
 
-FastAPI backend for the ALF Shopify website assistant using Groq.
+This build keeps the same `/api/chat` contract used by the Shopify theme.
 
-## What V2 adds
+Changes:
+- compact prompt and only last 10 chat messages are sent to Groq to reduce TPM usage
+- primary model remains `openai/gpt-oss-20b` by default
+- automatic fallback to `groq/compound-mini` on provider 429/5xx/capacity/timeout errors
+- lower max completion tokens and low reasoning effort for GPT-OSS
+- clearer Render logs showing provider status/model
 
-The AI can now understand real Get a Quote details from normal conversation and prepare a structured form update for:
+Environment variables:
+- `GROQ_API_KEY` required
+- `GROQ_MODEL` optional, default `openai/gpt-oss-20b`
+- `GROQ_FALLBACK_MODEL` optional, default `groq/compound-mini`
+- `ALLOWED_ORIGINS` optional, default `https://alf-uniforms.myshopify.com`
+- `RATE_LIMIT_PER_MINUTE` optional, default `30`
 
-- Uniform type + quantity
-- Company and industry
-- Project/team description
-- Color and deadline
-- Male/female counts
-- Size breakdown (S / M / L / XL / XXL / Other)
-- Branding method
-- Logo placement and logo readiness
-- Branding notes
-- Contact name, phone, email and Kuwait area
-- Follow-up method and best contact time
-- Additional notes
-
-Nothing is written into the quotation silently. The AI first summarizes what it understood and returns a **Confirm & fill my quote** action. The Shopify theme applies the fields only after the visitor clicks that confirmation.
-
-## Render update
-
-Replace the previous backend files with this V2 package and redeploy the same Render service. Keep your existing environment variables; you do not need a new URL.
-
-- Runtime: Python 3
-- Build command: `pip install -r requirements.txt`
-- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-- Health check: `/health`
-
-## Environment variables
-
-- `GROQ_API_KEY` — your Groq API key. Keep it in Render only.
-- `GROQ_MODEL` — default `openai/gpt-oss-20b`.
-- `ALLOWED_ORIGINS` — e.g. `https://alf-uniforms.myshopify.com`
-- `RATE_LIMIT_PER_MINUTE` — default 30.
-
-## Endpoints
-
-- `GET /health`
-- `POST /api/chat`
-
-The backend remains stateless. Chat history, active-session memory, the saved Enquiry List, and confirmed quote patches are handled by the Shopify theme/browser.
+Deploy by replacing the backend repository files and triggering a Render deploy. No Shopify theme change is required if it already points to the same Render URL.

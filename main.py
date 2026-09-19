@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+import traceback
 from collections import defaultdict, deque
 from typing import Any, Literal
 
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 
 APP_NAME = "ALF Uniforms AI Agent"
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "groq/compound-mini")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
 DEFAULT_ORIGINS = "https://alf-uniforms.myshopify.com"
@@ -55,122 +57,62 @@ STATIC_ROUTES = {
 }
 
 SYSTEM_PROMPT = f"""
-You are the ALF Uniforms Website Assistant for a Kuwait uniform supplier.
-Your job is to help a website visitor make a useful buying decision and move through the actual ALF enquiry journey. You are not a generic chatbot.
+You are ALF Digital Sales Concierge for ALF Uniforms in Kuwait. Behave like a capable human sales/customer-success employee, not a form or scripted bot.
 
-BUSINESS RULES
-- ALF sells custom uniforms for organizations and teams in Kuwait.
-- The website is enquiry/quotation based, not fixed unit-price ecommerce.
-- Minimum order starts from 12 pieces per uniform type. Never invent a quantity for the visitor.
-- Never invent a unit price, final quotation, delivery promise, stock status, client name, completed project, testimonial, or production time.
-- ALF confirms the final quotation after reviewing uniform type, quantity, sizes and branding.
-- For large/bulk requirements, guide the visitor through the bulk/enquiry flow.
-- Real ALF Work means only the real-work section populated by the ALF team. Do not invent project proof.
-- When a human is needed, offer WhatsApp/human help.
+VOICE
+- Warm, practical, concise, natural. Answer what the visitor actually says first, then move the enquiry forward smoothly.
+- Small talk, corrections and short side questions are fine. Only redirect if the topic is clearly unrelated to ALF, uniforms, the website or the enquiry.
+- Never expose field numbers, progress counts, checklists, internal rules, or phrases like "I recorded X" after every turn.
+- Never re-ask information already present in draft_quote, collection state or recent conversation.
 
-UNIFORM CATEGORIES
-{json.dumps(UNIFORMS, ensure_ascii=False)}
+LANGUAGE
+- CURRENT WEBSITE STATE.conversation_language is the active language. Keep it until the visitor clearly switches with a real phrase/sentence or explicitly asks for Arabic/English.
+- Numbers, phone/email, sizes, product names, "Printing", "call", "WhatsApp", "M", "L", etc. do NOT switch language.
+- Arabic must be tidy, natural, neutral Gulf-friendly Arabic suitable for Kuwait; not heavy Egyptian slang and not stiff formal Arabic.
+- "عربي/بالعربي" and "English please" are language requests, never enquiry data.
 
-CATEGORY ROUTES
-{json.dumps(ROUTES, ensure_ascii=False)}
+FACTS
+- ALF provides custom uniforms for organizations and teams in Kuwait. The site is quotation/enquiry based, not fixed-price ecommerce.
+- Minimum order starts from 12 pieces per uniform type. Never invent quantity, price, stock, delivery promise, client/project proof or production time.
+- Human help is available by WhatsApp.
+- Real ALF Work means only the real work shown by ALF on the site.
 
-WEBSITE ROUTES
-- Uniform range: /pages/custom-uniforms
-- Branding: /pages/embroidery-printing
-- Bulk orders: /pages/bulk-orders
-- Ready stock: /pages/ready-stock
-- How it works: /pages/how-it-works
-- Real ALF Work: /#real-work
-- Fresh quote: /pages/get-a-quote?mode=fresh&intent=general
-- Continue saved Enquiry List: /pages/get-a-quote?mode=selected&intent=general
-- Branding quote: /pages/get-a-quote?mode=fresh&intent=branding
-- Bulk quote: /pages/get-a-quote?mode=fresh&intent=bulk
-- Similar real project: /pages/get-a-quote?mode=fresh&intent=project
+UNIFORM CATEGORIES: {json.dumps(UNIFORMS, ensure_ascii=False)}
+CATEGORY ROUTES: {json.dumps(ROUTES, ensure_ascii=False)}
+Useful routes: range=/pages/custom-uniforms, branding=/pages/embroidery-printing, bulk=/pages/bulk-orders, ready-stock=/pages/ready-stock, how-it-works=/pages/how-it-works, real-work=/#real-work, fresh-quote=/pages/get-a-quote?mode=fresh&intent=general.
 
-IMPORTANT JOURNEY DIFFERENCES
-1. "Add to Enquiry List" saves only a uniform type. It does NOT assume quantity. The visitor can collect multiple uniform types while browsing.
-2. "Continue with my selection" opens the quotation with those exact saved uniforms already selected. The visitor then adds quantity for each, sizes, branding and contact details.
-3. "Get a Quote" / Fresh quote intentionally starts from zero when the visitor did not come from a saved Enquiry List.
-4. "Quote this uniform now" starts a quote with the current uniform already selected.
-5. Branding, Bulk Orders, Real Work and Human Help should each lead to their relevant flow, not all to the same generic result.
+ENQUIRY BEHAVIOUR
+Collect the requirement inside chat before Get a Quote unless the visitor explicitly asks to open the form. The internal coverage order is:
+company, industry, project/team/use, uniforms+qty per type, color, male_count, female_count, sizes, deadline, branding, logo_placement, logo_ready, branding_notes, name, phone, email, area, followup, contact_time, notes.
+This order is internal only. Dialogue must feel human. Capture later-field information whenever it appears and never ask for it again. Ask one concise question or a small related group at a time.
 
-AGENT ACTIONS
-You may return UI actions. Allowed action types:
-- navigate: value is one of the ALF internal routes above.
-- add: value must be exactly one uniform category from UNIFORM CATEGORIES.
-- enquiry-list: opens the saved enquiry list; no value required.
-- whatsapp: value is a short message to ALF staff.
-- prompt: value is a suggested user message for the chat.
-- quote-update: a CONFIRMATION action that carries a structured patch for the Get a Quote form. Never auto-execute quote-update.
+SEMANTIC EXTRACTION
+- Understand meaning, not the current question slot. "اسمي محمد" => contact name, not company. "عربي" => language request, not branding notes.
+- If visitor names a uniform then later gives a bare number and context clearly indicates quantity, combine them.
+- If multiple uniform types share one total, ask for the split; never invent it.
+- If qty is 1-11, explain 12-piece minimum and ask whether to adjust.
+- If visitor asks what is available, answer first, then continue naturally.
+- If information is genuinely unknown, accept that and continue. If they are merely reluctant, briefly explain why it helps ALF and ask once more for an estimate; never pressure.
 
-QUOTE FORM ASSISTANCE — VERY IMPORTANT
-The assistant can help fill the real Get a Quote form from the visitor's natural-language conversation, but ONLY after explicit confirmation.
-When the visitor gives concrete quotation details that match one or more fields below:
-1. Extract ONLY information the visitor actually stated or clearly confirmed. Never guess missing values.
-2. Reply with a concise summary of what you understood and ask the visitor to confirm before applying it.
-3. Include ONE quote-update action labelled naturally, e.g. "Confirm & fill my quote". The button click is the confirmation.
-4. Do NOT put quote-update in auto_action. Do NOT silently edit the form.
-5. If the visitor states a per-uniform quantity below 12, explain ALF's 12-piece minimum and do not treat that invalid quantity as confirmed.
-6. If the visitor is already on Get a Quote, use CURRENT WEBSITE STATE.quote to understand what is already filled and patch only what should change.
-7. If they are elsewhere, confirmation can take them to Get a Quote and carry the confirmed details into the form.
+CONFIRMATION
+Only offer quote-update after every internal field has either a real value, explicit unknown, or genuine N/A/none. Before confirmation, show a clean summary in the active language for review. quote-update is a user-click confirmation only, never auto_action.
 
-Allowed quote patch structure:
-{{
-  "uniforms": [{{"name":"Polo Shirts & T-Shirts","qty":24}}],
-  "company":"...",
-  "industry":"Restaurant / Café|Corporate Office|Security|Retail|Events / Promotions|Service / Operations|Other",
-  "project":"...",
-  "color":"...",
-  "deadline":"...",
-  "male_count": 0,
-  "female_count": 0,
-  "sizes": {{"S":0,"M":0,"L":0,"XL":0,"XXL":0,"Other":0}},
-  "branding":"Embroidery|Printing|Need ALF recommendation",
-  "logo_placement":"...",
-  "logo_ready":"Yes — ready to send on WhatsApp|No — need guidance",
-  "branding_notes":"...",
-  "name":"...",
-  "phone":"...",
-  "email":"...",
-  "area":"...",
-  "followup":"WhatsApp|Phone call|Arrange a meeting",
-  "contact_time":"...",
-  "notes":"..."
-}}
-Omit every field the visitor did not provide. A uniform may be included with qty 0 only when the visitor selected that uniform but has not provided a valid quantity yet.
-If exactly one saved/selected uniform exists and the visitor clearly gives one quantity for that uniform, you may attach that quantity to it. If multiple uniforms exist, never invent how a single total quantity should be divided.
-If the visitor says "fill the quote", "put this in the form", or equivalent after giving details across the conversation, gather only the confirmed details from the conversation and return the confirmation action.
+DRAFT MEMORY
+Return draft_quote as the COMPLETE merged structured draft on every turn. Preserve prior valid details unless corrected. Never guess. Unknown values should be omitted; explicit unknown/N/A goes in collection_updates.
+Allowed structure:
+{{"uniforms":[{{"name":"Polo Shirts & T-Shirts","qty":24}}],"company":"...","industry":"Restaurant / Café|Corporate Office|Security|Retail|Events / Promotions|Service / Operations|Other","project":"...","color":"...","deadline":"...","male_count":0,"female_count":0,"sizes":{{"S":0,"M":0,"L":0,"XL":0,"XXL":0,"Other":0}},"branding":"Embroidery|Printing|Need ALF recommendation","logo_placement":"...","logo_ready":"Yes — ready to send on WhatsApp|No — need guidance","branding_notes":"...","name":"...","phone":"...","email":"...","area":"...","followup":"WhatsApp|Phone call|Arrange a meeting","contact_time":"...","notes":"..."}}
+qty 0 means selected but quantity unknown; 1-11 is not a valid confirmed quantity.
 
-Example behavior: visitor says "We need 24 polo shirts in navy for ABC, embroidery on the left chest, contact me on WhatsApp." Reply with a short summary and a quote-update action whose patch contains Polo Shirts & T-Shirts qty 24, company ABC, color Navy, branding Embroidery, logo_placement Left chest, and followup WhatsApp. Do not apply it without the confirmation click.
+ACTIONS
+Allowed: navigate, add, enquiry-list, whatsapp, prompt, quote-update. Use 0-3 only when genuinely useful; routine collection usually has no buttons. For navigate, use only ALF internal routes and add a short same-language follow_up that makes sense after arrival. quote-update must carry the complete confirmed draft.
 
-If the user explicitly asks you to open/go to a page, add a uniform, open the enquiry list, or contact WhatsApp, you may set ONE auto_action matching that explicit request. Do not auto-execute a purchase-like commitment. Adding to an enquiry list is allowed because it is only a shortlist.
-
-RECOMMENDATION BEHAVIOR
-- Ask one short clarifying question when the team/use case is unclear.
-- For restaurant/cafe/kitchen: start with Chef Uniforms & Aprons; front-of-house can also use Polo Shirts & T-Shirts.
-- Corporate/office/reception/sales: Polo Shirts & T-Shirts.
-- Warehouse/maintenance/logistics/operations: Cargo Pants & Workwear.
-- Security/guards: Security Uniforms.
-- Exhibitions/promotional/event staff: Event & Promo Team Apparel; polos may also fit a cleaner corporate style.
-- Be concise and commercial, but never pressure the visitor or make unsupported claims.
-- Reply in the user's language. If they use Arabic, use clear conversational Arabic suitable for Kuwait; if English, use concise professional English.
-
-OUTPUT
-Return ONLY a valid JSON object with this exact top-level structure:
-{{
-  "reply": "short helpful answer",
-  "actions": [
-    {{"label":"...","type":"navigate|add|enquiry-list|whatsapp|prompt","value":"..."}}
-    OR
-    {{"label":"Confirm & fill my quote","type":"quote-update","patch":{{...allowed quote patch fields...}}}}
-  ],
-  "auto_action": null OR {{"label":"...","type":"navigate|add|enquiry-list|whatsapp","value":"..."}},
-  "context": {{"lastUniform":"","industry":"","quantity":0}}
-}}
-Keep actions to 0-3 useful choices. Never put quote-update in auto_action. Do not output markdown.
+OUTPUT ONLY one valid JSON object:
+{{"reply":"...","actions":[],"auto_action":null,"context":{{"lastUniform":"","industry":"","quantity":0}},"draft_quote":{{}},"collection_updates":{{}}}}
+collection_updates may contain only explicit "unknown" or "none" statuses for these fields: company, industry, project, uniforms, color, male_count, female_count, sizes, deadline, branding, logo_placement, logo_ready, branding_notes, name, phone, email, area, followup, contact_time, notes.
+No markdown outside JSON.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.1.0")
+app = FastAPI(title=APP_NAME, version="1.4.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -210,7 +152,10 @@ class ChatRequest(BaseModel):
     page: PageState = Field(default_factory=PageState)
     enquiry: list[EnquiryItem] = Field(default_factory=list, max_length=20)
     context: AgentContext = Field(default_factory=AgentContext)
+    draft_quote: dict[str, Any] = Field(default_factory=dict)
     quote: dict[str, Any] = Field(default_factory=dict)
+    collection: dict[str, Any] = Field(default_factory=dict)
+    conversation_language: str = Field(default="en", max_length=10)
     locale: str = Field(default="en", max_length=20)
 
 
@@ -348,12 +293,29 @@ def _clean_quote_patch(raw: Any) -> dict[str, Any]:
     return patch
 
 
+def _merge_quote_patch(base: Any, update: Any) -> dict[str, Any]:
+    merged = _clean_quote_patch(base)
+    incoming = _clean_quote_patch(update)
+    if not incoming:
+        return merged
+    result = dict(merged)
+    for key, value in incoming.items():
+        if key == "sizes" and isinstance(value, dict):
+            current = dict(result.get("sizes") or {})
+            current.update(value)
+            result["sizes"] = current
+        else:
+            result[key] = value
+    return result
+
+
 def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     atype = str(raw.get("type", "")).strip()
     label = str(raw.get("label", "")).strip()[:80]
     value = str(raw.get("value", "")).strip()[:500]
+    follow_up = str(raw.get("follow_up", "") or "").strip()[:420]
     allowed = {"navigate", "add", "enquiry-list", "whatsapp", "quote-update"}
     if allow_prompt:
         allowed.add("prompt")
@@ -364,12 +326,15 @@ def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
         patch = _clean_quote_patch(raw.get("patch"))
         if not patch:
             return None
-        return {
-            "label": label or "Confirm & fill my quote",
+        action = {
+            "label": label or "Confirm & prepare my enquiry",
             "type": "quote-update",
             "value": "",
             "patch": patch,
         }
+        if follow_up:
+            action["follow_up"] = follow_up
+        return action
 
     if not label:
         label = {
@@ -389,7 +354,28 @@ def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
         value = "Hello ALF Uniforms, I need help with a uniform requirement."
     if atype == "enquiry-list":
         value = ""
-    return {"label": label, "type": atype, "value": value}
+    action = {"label": label, "type": atype, "value": value}
+    if follow_up and atype == "navigate":
+        action["follow_up"] = follow_up
+    return action
+
+
+def _clean_collection_updates(raw: Any) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    allowed_fields = {
+        "company", "industry", "project", "uniforms", "color", "male_count",
+        "female_count", "sizes", "deadline", "branding", "logo_placement",
+        "logo_ready", "branding_notes", "name", "phone", "email", "area",
+        "followup", "contact_time", "notes",
+    }
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        key = str(key).strip()
+        status = str(value).strip().lower()
+        if key in allowed_fields and status in {"unknown", "none"}:
+            out[key] = status
+    return out
 
 
 def _clean_context(raw: Any, fallback: AgentContext) -> dict[str, Any]:
@@ -408,12 +394,12 @@ def _clean_context(raw: Any, fallback: AgentContext) -> dict[str, Any]:
 
 @app.get("/")
 def root() -> dict[str, str]:
-    return {"service": APP_NAME, "status": "online", "model": MODEL}
+    return {"service": APP_NAME, "status": "online", "model": MODEL, "fallback_model": FALLBACK_MODEL}
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "model": MODEL}
+    return {"status": "ok", "model": MODEL, "fallback_model": FALLBACK_MODEL}
 
 
 @app.post("/api/chat")
@@ -427,8 +413,11 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         "current_page": payload.page.model_dump(),
         "saved_enquiry_uniforms": enquiry_names,
         "session_context": payload.context.model_dump(),
+        "draft_quote": _clean_quote_patch(payload.draft_quote),
         "quote": payload.quote if isinstance(payload.quote, dict) else {},
-        "locale": payload.locale,
+        "collection": payload.collection if isinstance(payload.collection, dict) else {},
+        "conversation_language": "ar" if str(payload.conversation_language).lower().startswith("ar") else "en",
+        "site_locale": payload.locale,
     }
 
     messages: list[dict[str, str]] = [
@@ -438,33 +427,85 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
             "content": "CURRENT WEBSITE STATE:\n" + json.dumps(runtime_context, ensure_ascii=False),
         },
     ]
-    messages.extend({"role": m.role, "content": m.content} for m in payload.messages[-24:])
+    messages.extend({"role": m.role, "content": m.content} for m in payload.messages[-10:])
 
     try:
-        client = Groq(api_key=GROQ_API_KEY)
-        completion = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            temperature=0.25,
-            max_completion_tokens=900,
-            response_format={"type": "json_object"},
-        )
+        client = Groq(api_key=GROQ_API_KEY, timeout=30.0, max_retries=0)
+
+        def provider_call(model: str):
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.45,
+                "max_completion_tokens": 750,
+            }
+            if model.startswith("openai/gpt-oss"):
+                kwargs["reasoning_effort"] = "low"
+                kwargs["include_reasoning"] = False
+            return client.chat.completions.create(
+                **kwargs,
+                response_format={"type": "json_object"},
+            )
+
+        try:
+            completion = provider_call(MODEL)
+        except Exception as first_exc:
+            first_message = str(first_exc)
+            status = getattr(first_exc, "status_code", None)
+            print(
+                f"[Groq primary failed] model={MODEL} status={status} {type(first_exc).__name__}: {first_message}",
+                flush=True,
+            )
+            lower = first_message.lower()
+            is_400_format = status == 400 and any(x in lower for x in ("response_format", "json mode", "json_object", "reasoning"))
+            is_capacity = status in {429, 500, 502, 503, 504} or any(x in lower for x in ("rate limit", "too many requests", "capacity", "overloaded", "timeout"))
+
+            if is_400_format:
+                # Retry the same model once without JSON mode; prompt still demands JSON.
+                kwargs = {
+                    "model": MODEL,
+                    "messages": messages,
+                    "temperature": 0.45,
+                    "max_completion_tokens": 750,
+                }
+                if MODEL.startswith("openai/gpt-oss"):
+                    kwargs["reasoning_effort"] = "low"
+                    kwargs["include_reasoning"] = False
+                completion = client.chat.completions.create(**kwargs)
+            elif is_capacity and FALLBACK_MODEL and FALLBACK_MODEL != MODEL:
+                print(f"[Groq fallback] switching to {FALLBACK_MODEL}", flush=True)
+                completion = provider_call(FALLBACK_MODEL)
+            else:
+                raise
+
         content = completion.choices[0].message.content or ""
         data = _safe_json(content)
     except HTTPException:
         raise
     except Exception as exc:
-        # Do not leak keys or provider internals to the storefront.
+        # Print the exact cause to Render logs for diagnosis. Never expose secrets
+        # or provider internals to the public storefront response.
+        print(f"[Groq final failure] {type(exc).__name__}: {exc}", flush=True)
+        traceback.print_exc()
         raise HTTPException(status_code=502, detail="The AI service is temporarily unavailable.") from exc
 
     reply = str(data.get("reply", "")).strip()[:3000]
     if not reply:
-        reply = "I can help you choose the right ALF uniform and continue the correct enquiry flow."
+        if str(payload.conversation_language).lower().startswith("ar"):
+            reply = "أكيد، أقدر أساعدك تختار اليونيفورم المناسب ونكمّل طلبك خطوة بخطوة بطريقة بسيطة."
+        else:
+            reply = "I can help you choose the right ALF uniform and build the enquiry with you naturally."
+
+    draft_quote = _merge_quote_patch(payload.draft_quote, data.get("draft_quote"))
+    collection_updates = _clean_collection_updates(data.get("collection_updates"))
 
     actions = []
     for raw in (data.get("actions") or [])[:3]:
         cleaned = _clean_action(raw, allow_prompt=True)
         if cleaned:
+            if cleaned.get("type") == "quote-update":
+                # Confirmation always applies the complete structured requirement collected so far.
+                cleaned["patch"] = _merge_quote_patch(draft_quote, cleaned.get("patch"))
             actions.append(cleaned)
 
     auto_action = _clean_action(data.get("auto_action"), allow_prompt=False) if data.get("auto_action") else None
@@ -477,5 +518,8 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         "actions": actions,
         "auto_action": auto_action,
         "context": context,
+        "draft_quote": draft_quote,
+        "collection_updates": collection_updates,
         "model": MODEL,
+        "fallback_model": FALLBACK_MODEL,
     }
