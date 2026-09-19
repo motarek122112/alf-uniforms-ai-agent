@@ -1,29 +1,22 @@
-# ALF Uniforms AI Agent Backend V2
+# ALF Uniforms AI Agent Backend V3 — Sales Concierge
 
 FastAPI backend for the ALF Shopify website assistant using Groq.
 
-## What V2 adds
+## What V3 adds
 
-The AI can now understand real Get a Quote details from normal conversation and prepare a structured form update for:
-
-- Uniform type + quantity
-- Company and industry
-- Project/team description
-- Color and deadline
-- Male/female counts
-- Size breakdown (S / M / L / XL / XXL / Other)
-- Branding method
-- Logo placement and logo readiness
-- Branding notes
-- Contact name, phone, email and Kuwait area
-- Follow-up method and best contact time
-- Additional notes
-
-Nothing is written into the quotation silently. The AI first summarizes what it understood and returns a **Confirm & fill my quote** action. The Shopify theme applies the fields only after the visitor clicks that confirmation.
+- Sales-concierge personality: proactive, concise, human-like and focused on resolving the customer's requirement instead of ending the chat quickly.
+- Structured quote-draft memory across the conversation.
+- The agent collects the requirement in chat before sending the visitor to Get a Quote.
+- It avoids re-asking information already provided.
+- It collects uniform + quantity, team/project details, branding and contact/follow-up details.
+- It summarizes the complete requirement and asks for explicit confirmation before the Shopify form is changed.
+- The confirmed quote-update carries the complete draft so all applicable fields across the 4 Get a Quote steps can be filled at once.
+- Navigation actions can include a same-language follow-up question that the theme displays as a temporary notification after the destination page loads.
+- The agent is instructed to continue helping after a rejected recommendation instead of closing the conversation.
 
 ## Render update
 
-Replace the previous backend files with this V2 package and redeploy the same Render service. Keep your existing environment variables; you do not need a new URL.
+Replace the previous backend files in the same GitHub repository with this V3 package and redeploy the same Render service. Keep the existing Render URL and environment variables.
 
 - Runtime: Python 3
 - Build command: `pip install -r requirements.txt`
@@ -32,7 +25,7 @@ Replace the previous backend files with this V2 package and redeploy the same Re
 
 ## Environment variables
 
-- `GROQ_API_KEY` — your Groq API key. Keep it in Render only.
+- `GROQ_API_KEY` — keep it in Render only.
 - `GROQ_MODEL` — default `openai/gpt-oss-20b`.
 - `ALLOWED_ORIGINS` — e.g. `https://alf-uniforms.myshopify.com`
 - `RATE_LIMIT_PER_MINUTE` — default 30.
@@ -42,4 +35,4 @@ Replace the previous backend files with this V2 package and redeploy the same Re
 - `GET /health`
 - `POST /api/chat`
 
-The backend remains stateless. Chat history, active-session memory, the saved Enquiry List, and confirmed quote patches are handled by the Shopify theme/browser.
+The backend remains stateless. The browser/theme stores the active conversation, old chats and structured quote draft; the backend receives that state on each request and returns the merged draft.
