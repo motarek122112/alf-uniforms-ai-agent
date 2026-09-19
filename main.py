@@ -112,7 +112,7 @@ collection_updates may contain only explicit "unknown" or "none" statuses for th
 No markdown outside JSON.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.4.2")
+app = FastAPI(title=APP_NAME, version="1.4.3")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -432,23 +432,61 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     try:
         client = Groq(api_key=GROQ_API_KEY, timeout=30.0, max_retries=0)
 
-        def provider_call(model: str):
-            kwargs = {
+        def provider_kwargs(model: str) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {
                 "model": model,
                 "messages": messages,
-                "temperature": 0.45,
+                "temperature": 0.35,
                 "max_completion_tokens": 750,
             }
             if model.startswith("openai/gpt-oss"):
                 kwargs["reasoning_effort"] = "low"
                 kwargs["include_reasoning"] = False
-            return client.chat.completions.create(
-                **kwargs,
-                response_format={"type": "json_object"},
+            return kwargs
+
+        def provider_call(model: str, *, json_mode: bool = False):
+            kwargs = provider_kwargs(model)
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            return client.chat.completions.create(**kwargs)
+
+        def looks_like_json_generation_error(exc: Exception) -> bool:
+            status = getattr(exc, "status_code", None)
+            lower = str(exc).lower()
+            return status == 400 and any(
+                marker in lower
+                for marker in (
+                    "failed to generate json",
+                    "json_validate_failed",
+                    "failed_generation",
+                    "response_format",
+                    "json mode",
+                    "json_object",
+                )
             )
 
+        def looks_like_capacity_error(exc: Exception) -> bool:
+            status = getattr(exc, "status_code", None)
+            lower = str(exc).lower()
+            return status in {429, 500, 502, 503, 504} or any(
+                marker in lower
+                for marker in (
+                    "rate limit",
+                    "too many requests",
+                    "capacity",
+                    "overloaded",
+                    "timeout",
+                    "tokens per day",
+                    "tokens per minute",
+                )
+            )
+
+        # Prefer plain completion. The system prompt already requires one JSON object,
+        # and avoiding provider-side JSON enforcement prevents Groq's intermittent
+        # `json_validate_failed / Failed to generate JSON` 400 errors on natural Arabic.
+        active_model = MODEL
         try:
-            completion = provider_call(MODEL)
+            completion = provider_call(MODEL, json_mode=False)
         except Exception as first_exc:
             first_message = str(first_exc)
             status = getattr(first_exc, "status_code", None)
@@ -456,30 +494,40 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
                 f"[Groq primary failed] model={MODEL} status={status} {type(first_exc).__name__}: {first_message}",
                 flush=True,
             )
-            lower = first_message.lower()
-            is_400_format = status == 400 and any(x in lower for x in ("response_format", "json mode", "json_object", "reasoning"))
-            is_capacity = status in {429, 500, 502, 503, 504} or any(x in lower for x in ("rate limit", "too many requests", "capacity", "overloaded", "timeout"))
-
-            if is_400_format:
-                # Retry the same model once without JSON mode; prompt still demands JSON.
-                kwargs = {
-                    "model": MODEL,
-                    "messages": messages,
-                    "temperature": 0.45,
-                    "max_completion_tokens": 750,
-                }
-                if MODEL.startswith("openai/gpt-oss"):
-                    kwargs["reasoning_effort"] = "low"
-                    kwargs["include_reasoning"] = False
-                completion = client.chat.completions.create(**kwargs)
-            elif is_capacity and FALLBACK_MODEL and FALLBACK_MODEL != MODEL:
+            if looks_like_capacity_error(first_exc) and FALLBACK_MODEL and FALLBACK_MODEL != MODEL:
+                active_model = FALLBACK_MODEL
                 print(f"[Groq fallback] switching to {FALLBACK_MODEL}", flush=True)
-                completion = provider_call(FALLBACK_MODEL)
+                completion = provider_call(FALLBACK_MODEL, json_mode=False)
+            elif looks_like_json_generation_error(first_exc):
+                # Defensive compatibility path if a provider/model applies JSON
+                # validation upstream despite no response_format in this request.
+                completion = provider_call(MODEL, json_mode=False)
             else:
                 raise
 
         content = completion.choices[0].message.content or ""
-        data = _safe_json(content)
+        try:
+            data = _safe_json(content)
+        except Exception as parse_exc:
+            print(
+                f"[Model JSON parse failed] model={active_model} {type(parse_exc).__name__}: {parse_exc}; retrying once",
+                flush=True,
+            )
+            repair_messages = messages + [
+                {"role": "assistant", "content": content[:3500]},
+                {
+                    "role": "user",
+                    "content": (
+                        "Return the same intended answer again as exactly ONE valid JSON object only. "
+                        "No markdown, no code fence, no explanation outside JSON. Keep the same active conversation language."
+                    ),
+                },
+            ]
+            repair_kwargs = provider_kwargs(active_model)
+            repair_kwargs["messages"] = repair_messages
+            repair_kwargs["temperature"] = 0.0
+            repaired = client.chat.completions.create(**repair_kwargs)
+            data = _safe_json(repaired.choices[0].message.content or "")
     except HTTPException:
         raise
     except Exception as exc:
@@ -520,6 +568,7 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         "context": context,
         "draft_quote": draft_quote,
         "collection_updates": collection_updates,
-        "model": MODEL,
+        "model": active_model,
+        "primary_model": MODEL,
         "fallback_model": FALLBACK_MODEL,
     }

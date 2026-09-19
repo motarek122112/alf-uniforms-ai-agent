@@ -11,6 +11,8 @@ services:
         sync: false
       - key: GROQ_MODEL
         value: openai/gpt-oss-20b
+      - key: GROQ_FALLBACK_MODEL
+        value: groq/compound-mini
       - key: ALLOWED_ORIGINS
         value: https://alf-uniforms.myshopify.com
       - key: RATE_LIMIT_PER_MINUTE

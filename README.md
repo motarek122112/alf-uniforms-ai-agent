@@ -1,3 +1,5 @@
+# ALF Backend V4.3 — JSON Reliability Fix
+
 # ALF Groq AI Backend V4.2 — Rate Limit / 502 Resilience
 
 This build keeps the same `/api/chat` contract used by the Shopify theme.
@@ -17,3 +19,10 @@ Environment variables:
 - `RATE_LIMIT_PER_MINUTE` optional, default `30`
 
 Deploy by replacing the backend repository files and triggering a Render deploy. No Shopify theme change is required if it already points to the same Render URL.
+
+
+## V4.3 fix
+- Avoids provider-side JSON mode on normal chat calls, preventing intermittent Groq `json_validate_failed` / `Failed to generate JSON` 400 errors.
+- If the model still returns malformed JSON text, the backend automatically performs one zero-temperature JSON repair pass.
+- Keeps the 429/capacity fallback model behavior.
+- No Shopify theme change is required; the `/api/chat` contract remains the same.
