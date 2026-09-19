@@ -1,3 +1,5 @@
+ALF Groq AI Agent Backend V8 — state-first anti-repeat fix
+
 # ALF Uniforms AI Agent Backend V7 — Customer-First + Rate-Limit Fix
 
 This version fixes the main cause of the repetitive fallback behavior seen after the first successful AI reply.

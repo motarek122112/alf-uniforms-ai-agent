@@ -88,7 +88,7 @@ ALF FACTS
 
 BACKGROUND ENQUIRY
 Eventually, before final confirmation, resolve: company, industry, project/team, uniform type(s)+qty, color, male count, female count, sizes, deadline, branding, logo placement, logo readiness, branding notes, contact name, phone/WhatsApp, email, Kuwait area, preferred follow-up, best contact time, notes.
-CURRENT WEBSITE STATE.collection.current_field is only a hint for what is missing. It never outranks the latest user request.
+CURRENT WEBSITE STATE is authoritative and may already include facts extracted from the visitor's latest message before this request reached you. If a field is already present in draft_quote or marked resolved, NEVER ask for it again. CURRENT WEBSITE STATE.collection.current_field is the next missing detail after any deterministic capture and is only a hint; it never outranks the latest user request.
 Use field_status: known only when draft_quote contains the value; unknown only when the user truly does not know; none only when not applicable/there is nothing to add. If they refuse a useful detail, briefly explain why it helps and ask for an estimate, but do not pressure them repeatedly.
 Do not offer quote-update until every required field is resolved and each chosen uniform has qty >= 12.
 
@@ -106,7 +106,7 @@ Return ONLY one JSON object with keys: reply, actions, auto_action, context, dra
 No markdown outside reply text.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.6.0")
+app = FastAPI(title=APP_NAME, version="1.8.0")
 # Shopify can serve the same uploaded theme from the myshopify domain, a custom
 # storefront domain, and preview/editor hosts. CORS is not authentication here;
 # the API is already public, while the Groq key remains server-side. Allow HTTPS
@@ -329,9 +329,10 @@ def _language_only_message(text: str) -> bool:
 
 
 def _extract_person_name(text: str) -> str:
-    t = (text or "").strip()
+    t = re.sub(r"\s+", " ", (text or "").strip())
     patterns = [
         r"^(?:أنا\s+)?اسمي\s+(.+)$",
+        r"^(?:أنا|انا)\s+(.+?)\s+(?:وعندي|عندي|ولدي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)\b",
         r"^my\s+name\s+is\s+(.+)$",
         r"^i(?:'m|\s+am)\s+([A-Za-z][A-Za-z .'-]{1,80})$",
     ]
@@ -343,19 +344,42 @@ def _extract_person_name(text: str) -> str:
     return ""
 
 
-
 def _extract_company_name(text: str) -> str:
     t = re.sub(r"\s+", " ", (text or "").strip())
     patterns = [
         r"^(?:اسم\s+شركتي|اسم\s+(?:الشركة|الشركه)|(?:الشركة|الشركه)\s+اسمها|شركتي\s+اسمها|اسمها)\s*[:\-]?\s*(.+)$",
+        r"^(?:عندي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)(?:\s+اسمها)?\s+(.+)$",
+        r"^(?:أنا|انا)\s+.+?\s+(?:وعندي|عندي|ولدي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)(?:\s+اسمها)?\s+(.+)$",
         r"^(?:my\s+company(?:\s+name)?\s+is|company(?:\s+name)?\s+is|business(?:\s+name)?\s+is)\s+(.+)$",
     ]
     for pattern in patterns:
         m = re.match(pattern, t, flags=re.I)
         if m:
             value = re.sub(r"\s+", " ", m.group(1)).strip(" .,-")
+            value = re.sub(r"^هي\s+", "", value, flags=re.I)
             if value:
                 return value[:180]
+    return ""
+
+
+def _normalize_industry_text(text: str) -> str:
+    t = (text or "").strip().lower()
+    if not t:
+        return ""
+    if re.search(r"airport|airline|aviation|air transport|مطار|مطارات|طيران|شركة طيران|طيران مدني|hospital|healthcare|clinic|مستشفى|مستوصف|عيادة|school|university|education|مدرسة|جامعة|تعليم|construction|contracting|مقاولات|إنشاءات|انشاءات|hotel|فندق|other|أخرى|اخرى", t, flags=re.I):
+        return "Other"
+    if re.search(r"restaurant|cafe|café|food|hospitality|مطعم|كافيه|ضيافة", t, flags=re.I):
+        return "Restaurant / Café"
+    if re.search(r"security|guard|امن|أمن|حراسة", t, flags=re.I):
+        return "Security"
+    if re.search(r"retail|shop|store|commerce|trading|تجزئة|متجر|تجارة|تجاره|تجاري|تجارية", t, flags=re.I):
+        return "Retail"
+    if re.search(r"event|promotion|promo|exhibition|فعاليات|ترويج|معرض", t, flags=re.I):
+        return "Events / Promotions"
+    if re.search(r"service|operations|warehouse|maintenance|logistics|خدمات|تشغيل|مخزن|صيانة|لوجست", t, flags=re.I):
+        return "Service / Operations"
+    if re.search(r"corporate|office|company|مكتب|شركة", t, flags=re.I):
+        return "Corporate Office"
     return ""
 
 
@@ -373,7 +397,7 @@ def _extract_project_hint(text: str) -> str:
             return value[:160]
     return ""
 
-def _merge_model_draft(base: Any, update: Any, latest_user_text: str) -> dict[str, Any]:
+def _merge_model_draft(base: Any, update: Any, latest_user_text: str, current_field: str = "") -> dict[str, Any]:
     """Merge model extraction with deterministic guards for known failure modes."""
     base_clean = _clean_quote_patch(base)
     if _language_only_message(latest_user_text):
@@ -392,9 +416,16 @@ def _merge_model_draft(base: Any, update: Any, latest_user_text: str) -> dict[st
             if company in {person_name.lower(), raw} or raw.endswith(company):
                 incoming.pop("company", None)
     if company_name:
-        incoming["company"] = company_name
+        explicit_rename = bool(re.search(r"اسم\s+شركتي|اسم\s+(?:الشركة|الشركه)|company\s+name|business\s+name", latest_user_text, flags=re.I))
+        if "company" not in base_clean or explicit_rename:
+            incoming["company"] = company_name
     if project_hint and "project" not in base_clean and not str(incoming.get("project", "") or "").strip():
         incoming["project"] = project_hint
+
+    if current_field == "industry" and "industry" not in base_clean:
+        normalized_industry = _normalize_industry_text(latest_user_text)
+        if normalized_industry:
+            incoming["industry"] = normalized_industry
 
     # Phrases such as "أبي زي" / "I need a uniform" are user intent, not a
     # company name. A model extraction mistake here would poison the entire
@@ -546,7 +577,7 @@ def _asks_for_recommendation(text: str) -> bool:
 
 def _is_casual_nudge(text: str) -> bool:
     t = re.sub(r"[!؟?.,،]+$", "", (text or "").strip().lower())
-    return t in {"ركز", "اسمع", "اسمعني", "تمام", "اوكي", "أوكي", "طيب", "معاي", "معايا", "focus", "listen"}
+    return t in {"ركز", "اسمع", "اسمعني", "تمام", "اوكي", "أوكي", "طيب", "معاي", "معايا", "focus", "listen", "اسألني انت", "اسالني انت", "اسأل انت", "اسال انت", "ابدأ اسأل", "ابدأ اسال", "كمل انت", "كمّل انت", "ask me", "you ask", "lead me"}
 
 
 def _local_recommendation(payload: "ChatRequest") -> tuple[str, list[dict[str, Any]]]:
@@ -600,7 +631,7 @@ def _natural_local_reply(payload: "ChatRequest", reason: str = "") -> dict[str, 
     """Useful conversational fail-safe for temporary provider/rate-limit failures."""
     latest = payload.messages[-1].content if payload.messages else ""
     ar = payload.conversation_language == "ar"
-    draft = _merge_model_draft(payload.draft_quote, {}, latest)
+    draft = _merge_model_draft(payload.draft_quote, {}, latest, payload.collection.current_field)
     field_status = _clean_field_status({}, draft, payload.collection.resolved)
     actions: list[dict[str, Any]] = []
     t = (latest or "").strip().lower()
@@ -611,7 +642,23 @@ def _natural_local_reply(payload: "ChatRequest", reason: str = "") -> dict[str, 
     if _is_greeting(latest):
         reply = "هلا 👋 حياك الله. قل لي شنو محتاج بالضبط وأنا أرتبه معك." if ar else "Hi 👋 Welcome. Tell me what you need and I’ll work it through with you."
     elif _is_casual_nudge(latest):
-        reply = "معك ومركز 👌 كمل، شنو في بالك؟" if ar else "I’m with you 👍 Go ahead — what’s on your mind?"
+        if re.search(r"اسألني انت|اسالني انت|اسأل انت|اسال انت|ابدأ اسأل|ابدأ اسال|كمل انت|كمّل انت|ask me|you ask|lead me", latest, flags=re.I):
+            current = payload.collection.current_field or "company"
+            prompts_ar = {
+                "company": "تمام، نبدأ من الأساس: شنو اسم الشركة أو الجهة؟",
+                "industry": "تمام، ومجال نشاط الشركة شنو تقريبًا؟",
+                "project": "حلو، والزي هذا لأي فريق أو استخدام بالتحديد؟",
+                "uniforms": "خلنا نختار الأنسب. شنو نوع الزي اللي في بالك، وإذا محتار أقدر أرشح لك؟",
+            }
+            prompts_en = {
+                "company": "Sure — let’s start with the basics. What is the company or organization name?",
+                "industry": "Sure — what industry is the company in?",
+                "project": "Great — which team or use is the uniform for?",
+                "uniforms": "Let’s narrow it down. What uniform type do you have in mind, or would you like me to recommend one?",
+            }
+            reply = (prompts_ar if ar else prompts_en).get(current, "تمام، خلنا نكمل من أهم تفصيلة ناقصة عندي." if ar else "Sure — let’s continue with the most useful missing detail.")
+        else:
+            reply = "معك ومركز 👌 كمل، شنو في بالك؟" if ar else "I’m with you 👍 Go ahead — what’s on your mind?"
     elif re.fullmatch(r"(?:شركتي|الشركة|الشركه|اسم الشركة|اسم الشركه|my company|company)", t, flags=re.I):
         reply = "تمام، شنو اسم الشركة؟" if ar else "Sure — what’s the company name?"
     elif company_name:
@@ -673,7 +720,7 @@ def root() -> dict[str, str]:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "model": MODEL, "ai_configured": bool(GROQ_API_KEY)}
+    return {"status": "ok", "version": "1.8.0", "architecture": "state-first-anti-repeat", "model": MODEL, "ai_configured": bool(GROQ_API_KEY)}
 
 
 @app.post("/api/chat")
@@ -739,7 +786,7 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         )
 
     latest_user_text = payload.messages[-1].content if payload.messages else ""
-    draft_quote = _merge_model_draft(payload.draft_quote, data.get("draft_quote"), latest_user_text)
+    draft_quote = _merge_model_draft(payload.draft_quote, data.get("draft_quote"), latest_user_text, payload.collection.current_field)
     field_status = _clean_field_status(
         data.get("field_status"),
         draft_quote,
