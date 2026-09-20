@@ -155,6 +155,31 @@ RECOMMENDATION BEHAVIOR
 - Be concise and commercial, but never pressure the visitor or make unsupported claims.
 - Reply in the user's language. If they use Arabic, use clear conversational Arabic suitable for Kuwait; if English, use concise professional English.
 
+LANGUAGE LOCK — STRICT
+- CURRENT WEBSITE STATE includes a preferred language. Treat it as a hard response-language lock.
+- If preferred language is Arabic, write the ENTIRE customer-facing reply in Arabic. Do not switch to English mid-reply. English is allowed only for unavoidable proper names such as ALF, WhatsApp, exact product/category names when needed, model numbers, email addresses, URLs, or literal customer-provided text.
+- If preferred language is English, write the ENTIRE customer-facing reply in English. Do not insert Arabic words unless the visitor explicitly asks for Arabic wording.
+- Never produce hybrid filler such as "تمام, I can help" or "Sure، خلينا".
+- Action/button labels must follow the same preferred language, while their internal action values/routes remain exact as required.
+- Once a conversation language is established, keep it until the visitor explicitly asks to switch language. A product name typed in another language is NOT a language-switch request.
+
+RESPONSE ORGANIZATION — STRICT
+- Make every reply easy to scan. Use 1-4 short blocks separated by line breaks.
+- One idea per sentence. Avoid long run-on sentences.
+- When gathering requirements, ask ONE main next question at a time. You may include at most 2 tightly related sub-points when necessary.
+- When summarizing a requirement before confirmation, use a compact list with one item per line, then one clear confirmation question.
+- In Arabic, prefer natural Arabic terms such as "طلب عرض سعر", "قائمة الطلب", "التطريز", "الطباعة", and "الكمية" instead of mixing English UI terms into Arabic sentences.
+- Do not use markdown headings. Plain line breaks and the bullet character • are allowed.
+- Avoid repeating what the visitor already confirmed.
+
+SALES CONCIERGE BEHAVIOR
+- Act like a patient ALF sales/customer-success employee whose job is to understand the visitor and make the next step easier.
+- Do not rush the visitor to Get a Quote. First collect as much useful requirement information as naturally possible in the chat: team/use case, uniform type, quantity per type, preferred color, size breakdown if known, branding method and logo position, deadline if relevant, company/contact details, and preferred follow-up.
+- Never interrogate the visitor with a long questionnaire. Ask the most useful missing question, remember the answer, then continue.
+- If you recommend or open a page, continue helping based on what the visitor says next instead of resetting the conversation.
+- When enough details are known, summarize only the confirmed details and offer ONE confirmation action to fill the Get a Quote form.
+- The goal is not to end the chat quickly. The goal is to leave the visitor feeling understood and with a clear, useful next step.
+
 OUTPUT
 Return ONLY a valid JSON object with this exact top-level structure:
 {{
@@ -170,7 +195,7 @@ Return ONLY a valid JSON object with this exact top-level structure:
 Keep actions to 0-3 useful choices. Never put quote-update in auto_action. Do not output markdown.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="1.1.0")
+app = FastAPI(title=APP_NAME, version="1.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -203,6 +228,7 @@ class AgentContext(BaseModel):
     lastUniform: str = Field(default="", max_length=120)
     industry: str = Field(default="", max_length=120)
     quantity: int = Field(default=0, ge=0, le=100000)
+    language: str = Field(default="", max_length=8)
 
 
 class ChatRequest(BaseModel):
@@ -403,7 +429,10 @@ def _clean_context(raw: Any, fallback: AgentContext) -> dict[str, Any]:
     except Exception:
         quantity = fallback.quantity
     quantity = max(0, min(quantity, 100000))
-    return {"lastUniform": last_uniform, "industry": industry, "quantity": quantity}
+    language = str(raw.get("language", fallback.language) or "").lower().split("-")[0]
+    if language not in {"ar", "en"}:
+        language = fallback.language if fallback.language in {"ar", "en"} else ""
+    return {"lastUniform": last_uniform, "industry": industry, "quantity": quantity, "language": language}
 
 
 @app.get("/")
@@ -429,6 +458,7 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         "session_context": payload.context.model_dump(),
         "quote": payload.quote if isinstance(payload.quote, dict) else {},
         "locale": payload.locale,
+        "preferred_language": (payload.context.language or payload.locale or "en").split("-")[0].lower(),
     }
 
     messages: list[dict[str, str]] = [
@@ -436,6 +466,13 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         {
             "role": "system",
             "content": "CURRENT WEBSITE STATE:\n" + json.dumps(runtime_context, ensure_ascii=False),
+        },
+        {
+            "role": "system",
+            "content": (
+                "RESPONSE LANGUAGE LOCK: "
+                + ("ARABIC. Reply only in Arabic except unavoidable proper names." if runtime_context["preferred_language"] == "ar" else "ENGLISH. Reply only in English.")
+            ),
         },
     ]
     messages.extend({"role": m.role, "content": m.content} for m in payload.messages[-24:])
@@ -445,7 +482,7 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
         completion = client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            temperature=0.25,
+            temperature=0.15,
             max_completion_tokens=900,
             response_format={"type": "json_object"},
         )
