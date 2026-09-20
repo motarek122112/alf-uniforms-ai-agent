@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 
 APP_NAME = "ALF Uniforms AI Agent"
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
-FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.6-27b")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
 DEFAULT_ORIGINS = "https://alf-uniforms.myshopify.com"
@@ -31,8 +30,6 @@ UNIFORMS = [
     "Event & Promo Team Apparel",
 ]
 
-CUSTOM_UNIFORM = "Custom Uniform"
-
 ROUTES = {
     "Polo Shirts & T-Shirts": "/pages/polo-t-shirts",
     "Chef Uniforms & Aprons": "/pages/chef-uniforms",
@@ -40,7 +37,6 @@ ROUTES = {
     "Cargo Pants & Workwear": "/pages/workwear",
     "Security Uniforms": "/pages/security-uniforms",
     "Event & Promo Team Apparel": "/pages/event-uniforms",
-    CUSTOM_UNIFORM: "/pages/custom-uniforms",
 }
 
 STATIC_ROUTES = {
@@ -59,69 +55,128 @@ STATIC_ROUTES = {
 }
 
 SYSTEM_PROMPT = f"""
-You are ALF Digital Sales Concierge for ALF Uniforms in Kuwait.
+You are the ALF Uniforms Website Assistant for a Kuwait uniform supplier.
+Your job is to help a website visitor make a useful buying decision and move through the actual ALF enquiry journey. You are not a generic chatbot.
 
-Your job is to sound like a capable human sales/customer-success employee while the storefront itself handles data collection, navigation, buttons, and quotation-form filling.
+BUSINESS RULES
+- ALF sells custom uniforms for organizations and teams in Kuwait.
+- The website is enquiry/quotation based, not fixed unit-price ecommerce.
+- Minimum order starts from 12 pieces per uniform type. Never invent a quantity for the visitor.
+- Never invent a unit price, final quotation, delivery promise, stock status, client name, completed project, testimonial, or production time.
+- ALF confirms the final quotation after reviewing uniform type, quantity, sizes and branding.
+- For large/bulk requirements, guide the visitor through the bulk/enquiry flow.
+- Real ALF Work means only the real-work section populated by the ALF team. Do not invent project proof.
+- When a human is needed, offer WhatsApp/human help.
 
-CONVERSATION STYLE
-- Respond naturally to what the visitor actually said. Be warm, concise, practical, and human.
-- Usually use 1-3 short sentences. Avoid repetitive phrases such as “Got it”, “I recorded that”, or canned support language.
-- Small talk, corrections, “ركز”, “كمل”, “اسمع”, jokes, and brief conversational detours are fine. Reply normally.
-- Short replies such as “نعم”, “اه”, “تمام”, “لا”, a number, size, color, product name, “Printing”, “call”, etc. must be interpreted from the conversation and CURRENT WEBSITE STATE.
-- Do not act like a form or numbered wizard. Never mention field numbers, progress counters, internal states, schemas, or implementation details.
+UNIFORM CATEGORIES
+{json.dumps(UNIFORMS, ensure_ascii=False)}
 
-LANGUAGE
-- CURRENT WEBSITE STATE.conversation_language is authoritative.
-- If it is ar, reply in clear natural Arabic suitable for customers in Kuwait. Understand Egyptian and Gulf wording. Do not switch to English because the visitor typed a number, email, size, product name, color, or one English field value.
-- If it is en, reply in natural professional English.
-- Only an explicit language request or a clearly sustained sentence in the other language should switch the conversation language.
+CATEGORY ROUTES
+{json.dumps(ROUTES, ensure_ascii=False)}
 
-IMPORTANT ORCHESTRATION RULE
-- The storefront, NOT you, asks the next missing enquiry question and decides when to show confirmation.
-- Therefore, when CURRENT WEBSITE STATE.collection.active is true, do NOT ask the visitor any new enquiry-data questions yourself. Answer/acknowledge the visitor naturally and stop. The storefront will append exactly one next question.
-- Do not ask several questions in one response.
-- Do not repeat information already present in CURRENT WEBSITE STATE.draft_quote or collection.resolved.
+WEBSITE ROUTES
+- Uniform range: /pages/custom-uniforms
+- Branding: /pages/embroidery-printing
+- Bulk orders: /pages/bulk-orders
+- Ready stock: /pages/ready-stock
+- How it works: /pages/how-it-works
+- Real ALF Work: /#real-work
+- Fresh quote: /pages/get-a-quote?mode=fresh&intent=general
+- Continue saved Enquiry List: /pages/get-a-quote?mode=selected&intent=general
+- Branding quote: /pages/get-a-quote?mode=fresh&intent=branding
+- Bulk quote: /pages/get-a-quote?mode=fresh&intent=bulk
+- Similar real project: /pages/get-a-quote?mode=fresh&intent=project
 
-AGENT ACTIONS / WEBSITE CONTROL
-- Never invent URLs, quote IDs, order IDs, or pretend you already navigated, submitted, saved, or filled a form.
-- If the visitor asks to open a page, go to Get a Quote, show real work, or navigate somewhere, acknowledge naturally but do not provide a made-up link. The storefront action layer will perform the navigation.
-- If the visitor asks to go to the quotation page before the enquiry is complete, do not claim it is ready. The storefront will continue collecting the missing details first.
+IMPORTANT JOURNEY DIFFERENCES
+1. "Add to Enquiry List" saves only a uniform type. It does NOT assume quantity. The visitor can collect multiple uniform types while browsing.
+2. "Continue with my selection" opens the quotation with those exact saved uniforms already selected. The visitor then adds quantity for each, sizes, branding and contact details.
+3. "Get a Quote" / Fresh quote intentionally starts from zero when the visitor did not come from a saved Enquiry List.
+4. "Quote this uniform now" starts a quote with the current uniform already selected.
+5. Branding, Bulk Orders, Real Work and Human Help should each lead to their relevant flow, not all to the same generic result.
 
-SALES / ENQUIRY CONTEXT
-The storefront quietly builds a complete business enquiry in this order:
-company, industry, project/team/use, uniform type(s) + quantity per type, color, male count, female count, size breakdown, deadline, branding, logo placement, logo/artwork readiness, branding notes, contact name, phone/WhatsApp, email, Kuwait area, preferred follow-up, best contact time, notes.
-You may use these facts to understand context, but do not expose the list or its order.
-If the visitor does not know a detail, that is acceptable. If they are reluctant to share, the storefront may explain once why it helps the ALF team.
+AGENT ACTIONS
+You may return UI actions. Allowed action types:
+- navigate: value is one of the ALF internal routes above.
+- add: value must be exactly one uniform category from UNIFORM CATEGORIES.
+- enquiry-list: opens the saved enquiry list; no value required.
+- whatsapp: value is a short message to ALF staff.
+- prompt: value is a suggested user message for the chat.
+- quote-update: a CONFIRMATION action that carries a structured patch for the Get a Quote form. Never auto-execute quote-update.
 
-ALF FACTS / SAFETY
-- ALF supplies custom uniforms for organizations and teams in Kuwait.
-- The site is enquiry/quotation based, not fixed-price ecommerce.
-- Minimum order starts from 12 pieces per uniform type.
-- Available catalog categories: {json.dumps(UNIFORMS, ensure_ascii=False)}.
-- If the requirement does not fit a listed category, use Custom Uniform rather than forcing a wrong category.
-- For formal airline pilots, do NOT claim Polo Shirts or Workwear are the standard pilot uniform. Treat a formal pilot requirement as Custom Uniform. Ground crew can be Workwear or Polo depending on role.
-- Branding options include embroidery and printing.
-- Never invent price, stock, fabric specification, client names, completed-project proof, production duration, or delivery guarantees.
-- If a visitor gives an urgent deadline such as “tomorrow”, treat it as a requested target only. Say ALF must confirm feasibility; never promise it will be ready.
+QUOTE FORM ASSISTANCE — VERY IMPORTANT
+The assistant can help fill the real Get a Quote form from the visitor's natural-language conversation, but ONLY after explicit confirmation.
+When the visitor gives concrete quotation details that match one or more fields below:
+1. Extract ONLY information the visitor actually stated or clearly confirmed. Never guess missing values.
+2. Reply with a concise summary of what you understood and ask the visitor to confirm before applying it.
+3. Include ONE quote-update action labelled naturally, e.g. "Confirm & fill my quote". The button click is the confirmation.
+4. Do NOT put quote-update in auto_action. Do NOT silently edit the form.
+5. If the visitor states a per-uniform quantity below 12, explain ALF's 12-piece minimum and do not treat that invalid quantity as confirmed.
+6. If the visitor is already on Get a Quote, use CURRENT WEBSITE STATE.quote to understand what is already filled and patch only what should change.
+7. If they are elsewhere, confirmation can take them to Get a Quote and carry the confirmed details into the form.
 
-Return ONLY the conversational reply text. No JSON, no markdown links, no URLs, no hidden state, and no implementation notes.
+Allowed quote patch structure:
+{{
+  "uniforms": [{{"name":"Polo Shirts & T-Shirts","qty":24}}],
+  "company":"...",
+  "industry":"Restaurant / Café|Corporate Office|Security|Retail|Events / Promotions|Service / Operations|Other",
+  "project":"...",
+  "color":"...",
+  "deadline":"...",
+  "male_count": 0,
+  "female_count": 0,
+  "sizes": {{"S":0,"M":0,"L":0,"XL":0,"XXL":0,"Other":0}},
+  "branding":"Embroidery|Printing|Need ALF recommendation",
+  "logo_placement":"...",
+  "logo_ready":"Yes — ready to send on WhatsApp|No — need guidance",
+  "branding_notes":"...",
+  "name":"...",
+  "phone":"...",
+  "email":"...",
+  "area":"...",
+  "followup":"WhatsApp|Phone call|Arrange a meeting",
+  "contact_time":"...",
+  "notes":"..."
+}}
+Omit every field the visitor did not provide. A uniform may be included with qty 0 only when the visitor selected that uniform but has not provided a valid quantity yet.
+If exactly one saved/selected uniform exists and the visitor clearly gives one quantity for that uniform, you may attach that quantity to it. If multiple uniforms exist, never invent how a single total quantity should be divided.
+If the visitor says "fill the quote", "put this in the form", or equivalent after giving details across the conversation, gather only the confirmed details from the conversation and return the confirmation action.
+
+Example behavior: visitor says "We need 24 polo shirts in navy for ABC, embroidery on the left chest, contact me on WhatsApp." Reply with a short summary and a quote-update action whose patch contains Polo Shirts & T-Shirts qty 24, company ABC, color Navy, branding Embroidery, logo_placement Left chest, and followup WhatsApp. Do not apply it without the confirmation click.
+
+If the user explicitly asks you to open/go to a page, add a uniform, open the enquiry list, or contact WhatsApp, you may set ONE auto_action matching that explicit request. Do not auto-execute a purchase-like commitment. Adding to an enquiry list is allowed because it is only a shortlist.
+
+RECOMMENDATION BEHAVIOR
+- Ask one short clarifying question when the team/use case is unclear.
+- For restaurant/cafe/kitchen: start with Chef Uniforms & Aprons; front-of-house can also use Polo Shirts & T-Shirts.
+- Corporate/office/reception/sales: Polo Shirts & T-Shirts.
+- Warehouse/maintenance/logistics/operations: Cargo Pants & Workwear.
+- Security/guards: Security Uniforms.
+- Exhibitions/promotional/event staff: Event & Promo Team Apparel; polos may also fit a cleaner corporate style.
+- Be concise and commercial, but never pressure the visitor or make unsupported claims.
+- Reply in the user's language. If they use Arabic, use clear conversational Arabic suitable for Kuwait; if English, use concise professional English.
+
+OUTPUT
+Return ONLY a valid JSON object with this exact top-level structure:
+{{
+  "reply": "short helpful answer",
+  "actions": [
+    {{"label":"...","type":"navigate|add|enquiry-list|whatsapp|prompt","value":"..."}}
+    OR
+    {{"label":"Confirm & fill my quote","type":"quote-update","patch":{{...allowed quote patch fields...}}}}
+  ],
+  "auto_action": null OR {{"label":"...","type":"navigate|add|enquiry-list|whatsapp","value":"..."}},
+  "context": {{"lastUniform":"","industry":"","quantity":0}}
+}}
+Keep actions to 0-3 useful choices. Never put quote-update in auto_action. Do not output markdown.
 """.strip()
 
-app = FastAPI(title=APP_NAME, version="2.1.0")
-# Shopify can serve the same uploaded theme from the myshopify domain, a custom
-# storefront domain, and preview/editor hosts. CORS is not authentication here;
-# the API is already public, while the Groq key remains server-side. Allow HTTPS
-# storefront origins so a domain change never silently forces the theme into its
-# local fallback mode.
-ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX", r"https://.*").strip() or r"https://.*"
-
+app = FastAPI(title=APP_NAME, version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=ORIGIN_REGEX,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Accept"],
+    allow_headers=["Content-Type"],
 )
 
 # Lightweight abuse protection. Render instances are ephemeral, so this is intentionally simple.
@@ -150,23 +205,12 @@ class AgentContext(BaseModel):
     quantity: int = Field(default=0, ge=0, le=100000)
 
 
-class CollectionState(BaseModel):
-    active: bool = False
-    current_field: str = Field(default="", max_length=80)
-    required_order: list[str] = Field(default_factory=list, max_length=40)
-    resolved: dict[str, str] = Field(default_factory=dict)
-    rule: str = Field(default="", max_length=1600)
-
-
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=30)
     page: PageState = Field(default_factory=PageState)
     enquiry: list[EnquiryItem] = Field(default_factory=list, max_length=20)
     context: AgentContext = Field(default_factory=AgentContext)
-    draft_quote: dict[str, Any] = Field(default_factory=dict)
     quote: dict[str, Any] = Field(default_factory=dict)
-    collection: CollectionState = Field(default_factory=CollectionState)
-    conversation_language: Literal["ar", "en"] = "en"
     locale: str = Field(default="en", max_length=20)
 
 
@@ -211,7 +255,7 @@ def _clean_quote_patch(raw: Any) -> dict[str, Any]:
         return {}
 
     patch: dict[str, Any] = {}
-    quote_uniforms = set(UNIFORMS + [CUSTOM_UNIFORM, "Corporate Shirts", "Other"])
+    quote_uniforms = set(UNIFORMS + ["Corporate Shirts", "Other"])
 
     uniforms = []
     if isinstance(raw.get("uniforms"), list):
@@ -258,7 +302,7 @@ def _clean_quote_patch(raw: Any) -> dict[str, Any]:
         put_text(key, limit)
 
     allowed_industries = {
-        "Restaurant / Café", "Corporate Office", "Engineering", "Security", "Retail",
+        "Restaurant / Café", "Corporate Office", "Security", "Retail",
         "Events / Promotions", "Service / Operations", "Other"
     }
     industry = str(raw.get("industry", "")).strip()
@@ -304,291 +348,12 @@ def _clean_quote_patch(raw: Any) -> dict[str, Any]:
     return patch
 
 
-def _merge_quote_patch(base: Any, update: Any) -> dict[str, Any]:
-    merged = _clean_quote_patch(base)
-    incoming = _clean_quote_patch(update)
-    if not incoming:
-        return merged
-    result = dict(merged)
-    for key, value in incoming.items():
-        if key == "sizes" and isinstance(value, dict):
-            current = dict(result.get("sizes") or {})
-            current.update(value)
-            result["sizes"] = current
-        else:
-            result[key] = value
-    return result
-
-
-def _language_only_message(text: str) -> bool:
-    t = (text or "").strip().lower()
-    return bool(re.fullmatch(
-        r"(?:عربي|العربي|بالعربي|باللغة العربية|تكلم عربي|اتكلم عربي|arabic|arabic please|english|english please|انجليزي|إنجليزي|بالانجليزي|بالإنجليزي|تكلم انجليزي|اتكلم انجليزي)",
-        t,
-        flags=re.I,
-    ))
-
-
-def _extract_person_name(text: str) -> str:
-    t = re.sub(r"\s+", " ", (text or "").strip())
-    patterns = [
-        r"^(?:هلا+|مرحبا|مرحبًا|أهلين|اهلين)\s+(?:أنا|انا)\s+([\w\u0600-\u06FF .'-]{2,80})$",
-        r"^(?:أنا\s+)?اسمي\s+(.+)$",
-        r"^(?:أنا|انا)\s+(.+?)\s+(?:وعندي|عندي|ولدي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)\b",
-        r"^my\s+name\s+is\s+(.+)$",
-        r"^i(?:'m|\s+am)\s+([A-Za-z][A-Za-z .'-]{1,80})$",
-    ]
-    for pattern in patterns:
-        m = re.match(pattern, t, flags=re.I)
-        if m:
-            name = re.sub(r"\s+", " ", m.group(1)).strip(" .,-")
-            return name[:160]
-    return ""
-
-
-def _trim_company_tail(value: str) -> str:
-    value = re.sub(r"\s+", " ", (value or "").strip(" .,-"))
-    # Stop when the same sentence moves from naming the company into the uniform request.
-    parts = re.split(
-        r"\s+(?=(?:وابي|وأبي|وابغى|وأبغى|وعايز|ومحتاج|واحتاج|وأحتاج|واريد|وأريد|ابي|أبي|ابغى|أبغى|عايز|محتاج|احتاج|أحتاج|اريد|أريد|need|want)\b)",
-        value,
-        maxsplit=1,
-        flags=re.I,
-    )
-    return parts[0].strip(" .,-")[:180]
-
-
-def _extract_company_name(text: str) -> str:
-    t = re.sub(r"\s+", " ", (text or "").strip())
-    patterns = [
-        r"^(?:اسم\s+شركتي|اسم\s+(?:الشركة|الشركه)|(?:الشركة|الشركه)\s+اسمها|شركتي\s+اسمها|اسمها)\s*[:\-]?\s*(.+)$",
-        r"^(?:عندي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)(?:\s+اسمها)?\s+(.+)$",
-        r"(?:^|\s)اسمها\s+(?:شركة|شركه|مؤسسة|موسسه)?\s*(.+)$",
-        r"^(?:شركة|شركه|مؤسسة|موسسة)\s+(.+)$",
-        r"^(?:أنا|انا)\s+.+?\s+(?:وعندي|عندي|ولدي|لدي)\s+(?:شركة|شركه|مؤسسة|موسسة)(?:\s+اسمها)?\s+(.+)$",
-        r"^(?:my\s+company(?:\s+name)?\s+is|company(?:\s+name)?\s+is|business(?:\s+name)?\s+is)\s+(.+)$",
-    ]
-    for pattern in patterns:
-        m = re.match(pattern, t, flags=re.I)
-        if m:
-            value = re.sub(r"^(?:هي|هو)\s+", "", m.group(1), flags=re.I)
-            value = _trim_company_tail(value)
-            if value:
-                return value
-    return ""
-
-def _normalize_industry_text(text: str) -> str:
-    t = (text or "").strip().lower()
-    if not t:
-        return ""
-    if re.search(r"engineering|engineer|هندسه|هندسة|مهندسين", t, flags=re.I):
-        return "Engineering"
-    if re.search(r"airport|airline|aviation|air transport|مطار|مطارات|طيران|شركة طيران|طيران مدني|hospital|healthcare|clinic|مستشفى|مستوصف|عيادة|school|university|education|مدرسة|جامعة|تعليم|construction|contracting|مقاولات|إنشاءات|انشاءات|hotel|فندق|other|أخرى|اخرى", t, flags=re.I):
-        return "Other"
-    if re.search(r"restaurant|cafe|café|food|hospitality|مطعم|كافيه|ضيافة", t, flags=re.I):
-        return "Restaurant / Café"
-    if re.search(r"security|guard|امن|أمن|حراسة", t, flags=re.I):
-        return "Security"
-    if re.search(r"retail|shop|store|commerce|trading|تجزئة|متجر|تجارة|تجاره|تجاري|تجارية", t, flags=re.I):
-        return "Retail"
-    if re.search(r"event|promotion|promo|exhibition|فعاليات|ترويج|معرض", t, flags=re.I):
-        return "Events / Promotions"
-    if re.search(r"service|operations|warehouse|maintenance|logistics|خدمات|تشغيل|مخزن|صيانة|لوجست", t, flags=re.I):
-        return "Service / Operations"
-    if re.search(r"corporate|office|مكتب|إداري|اداري", t, flags=re.I):
-        return "Corporate Office"
-    return ""
-
-
-def _extract_project_hint(text: str) -> str:
-    t = re.sub(r"\s+", " ", (text or "").strip())
-    low = t.lower()
-    # Explicit corrections should override old context.
-    if re.search(r"(?:طاقم\s*)?أرضي|(?:طاقم\s*)?ارضي|ground\s*crew|ground\s*staff", low, flags=re.I):
-        return "طاقم أرضي بالمطار" if re.search(r"[\u0600-\u06FF]", t) else "Airport ground crew"
-    if re.search(r"طيارين?\s*(?:فعلي|فعليا|فعليًا|رسمي|رسميين)|formal\s+pilots?|actual\s+pilots?", low, flags=re.I):
-        return "طيارين رسميين" if re.search(r"[\u0600-\u06FF]", t) else "Formal pilots"
-    if re.search(r"(?:يونيفورمات?|يونيفرمات?|ازياء|أزياء|زي)\s+(?:ل)?(?:طيارين|طيار)|(?:فريق|الفريق)\s+(?:بيشتغل|يشتغل|هو)\s+(?:طيارين|طيار)", t, flags=re.I):
-        return "طيارين" if re.search(r"[\u0600-\u06FF]", t) else "Pilots"
-    direct_role = re.search(r"(?:يونيفورمات?|يونيفرمات?|ازياء|أزياء|ملابس\s+عمل|زي)\s+(?:ل)?(عمال|العمال|موظفين|الموظفين|شيفات|الشيفات|امن|أمن|حراس)(?:\s|$)", t, flags=re.I)
-    if direct_role:
-        return re.sub(r"^ال", "", direct_role.group(1).strip(), flags=re.I)[:160]
-    patterns = [
-        r"(?:ل|لل)\s*(طيارين|الطيارين|عمال|العمال|موظفين|الموظفين|شيفات|الشيفات|امن|أمن|حراس|فريق مبيعات|استقبال)(?:\s|$)",
-        r"(?:فريق|الفريق)\s+(?:بيشتغل|يشتغل|هو)\s+(طيارين|عمال|موظفين|شيفات|امن|أمن|حراس)(?:\s|$)",
-        r"(?:for|for my|for our)\s+([A-Za-z][A-Za-z \/&-]{2,80})(?:\?|$)",
-    ]
-    for pattern in patterns:
-        m = re.search(pattern, t, flags=re.I)
-        if m:
-            value = re.sub(r"^ال", "", m.group(1).strip(), flags=re.I)
-            return value[:160]
-    return ""
-
-def _extract_team_counts(text: str) -> dict[str, int]:
-    t = re.sub(r"[,،]", " ", (text or "").lower())
-    out: dict[str, int] = {}
-    male_patterns = [r"(\d{1,5})\s*(?:ذكر|ذكور|رجل|رجال|رجاله|رجالة|male|men)", r"(?:ذكر|ذكور|رجل|رجال|رجاله|رجالة|male|men)\s*(\d{1,5})"]
-    female_patterns = [r"(\d{1,5})\s*(?:انثى|أنثى|انثي|أنثي|إناث|نساء|بنت|بنات|female|women)", r"(?:انثى|أنثى|انثي|أنثي|إناث|نساء|بنت|بنات|female|women)\s*(\d{1,5})"]
-    for pat in male_patterns:
-        m = re.search(pat, t, flags=re.I)
-        if m:
-            out["male_count"] = int(m.group(1)); break
-    for pat in female_patterns:
-        m = re.search(pat, t, flags=re.I)
-        if m:
-            out["female_count"] = int(m.group(1)); break
-    return out
-
-
-def _extract_total_quantity(text: str) -> int:
-    t = (text or "").strip().lower()
-    explicit = re.search(r"(?:اجمالي|إجمالي|المجموع|total|quantity|كمية)\s*[:\-]?\s*(\d{1,6})", t, flags=re.I)
-    if explicit:
-        return int(explicit.group(1))
-    piece = re.search(r"\b(\d{2,6})\s*(?:قطعة|قطعه|قطع|pcs?|pieces?)\b", t, flags=re.I)
-    if piece:
-        return int(piece.group(1))
-    counts = _extract_team_counts(text)
-    nums = [int(x) for x in re.findall(r"\b\d{1,6}\b", t)]
-    if len(nums) >= 3 and counts.get("male_count") is not None and counts.get("female_count") is not None:
-        expected = counts["male_count"] + counts["female_count"]
-        if nums[0] == expected:
-            return nums[0]
-    return 0
-
-
-def _explicit_custom_uniform(text: str, project: str = "") -> bool:
-    t = f"{text or ''} {project or ''}".lower()
-    return bool(re.search(r"(?:زي|يونيفورم|uniform)\s*(?:ل)?\s*(?:طيار|طيارين)|pilot\s+uniform|formal\s+pilot", t, flags=re.I))
-
-
-def _semantic_capture(base: Any, latest_user_text: str, current_field: str = "") -> dict[str, Any]:
-    draft = _clean_quote_patch(base)
-    if _language_only_message(latest_user_text):
-        return draft
-
-    person_name = _extract_person_name(latest_user_text)
-    if person_name:
-        draft["name"] = person_name
-
-    company_name = _extract_company_name(latest_user_text)
-    if company_name:
-        explicit_rename = bool(re.search(r"اسم\s+شركتي|اسم\s+(?:الشركة|الشركه)|company\s+name|business\s+name", latest_user_text, flags=re.I))
-        if "company" not in draft or explicit_rename:
-            draft["company"] = company_name
-
-    # Industry can be volunteered at any time; it must not depend on current_field.
-    industry = _normalize_industry_text(latest_user_text)
-    if industry and ("industry" not in draft or current_field == "industry"):
-        draft["industry"] = industry
-
-    project_hint = _extract_project_hint(latest_user_text)
-    if project_hint:
-        # Ground/pilot clarifications are authoritative corrections, not merely hints.
-        if re.search(r"أرضي|ارضي|ground|طيارين?\s*(?:فعلي|رسمي)|formal\s+pilot|actual\s+pilot|(?:فريق|الفريق).*طيارين|(?:يونيفورمات?|يونيفرمات?|ازياء|أزياء|زي)\s+(?:ل)?طيار", latest_user_text, flags=re.I) or "project" not in draft:
-            draft["project"] = project_hint
-        if re.search(r"أرضي|ارضي|ground", latest_user_text, flags=re.I):
-            kept = [x for x in list(draft.get("uniforms") or []) if x.get("name") != CUSTOM_UNIFORM]
-            if kept:
-                draft["uniforms"] = kept
-            else:
-                draft.pop("uniforms", None)
-
-    for key, value in _extract_team_counts(latest_user_text).items():
-        draft[key] = value
-
-    uniforms = list(draft.get("uniforms") or [])
-    qty = _extract_total_quantity(latest_user_text)
-    if qty < 12 and current_field == "uniforms":
-        bare = re.fullmatch(r"\s*(\d{1,6})\s*(?:قطعة|قطعه|قطع|pcs?|pieces?)?\s*", latest_user_text or "", flags=re.I)
-        if bare:
-            qty = int(bare.group(1))
-    project_text = str(draft.get("project", "") or "")
-    if _explicit_custom_uniform(latest_user_text, project_text) or (qty >= 12 and not uniforms and re.search(r"طيار|pilot", project_text, flags=re.I)):
-        found = next((x for x in uniforms if x.get("name") == CUSTOM_UNIFORM), None)
-        if not found:
-            found = {"name": CUSTOM_UNIFORM, "qty": 0}
-            uniforms.append(found)
-        if qty >= 12:
-            found["qty"] = qty
-        draft["uniforms"] = uniforms
-    else:
-        pending = [x for x in uniforms if int(x.get("qty", 0) or 0) == 0]
-        if qty >= 12 and len(pending) == 1:
-            pending[0]["qty"] = qty
-            draft["uniforms"] = uniforms
-
-    return _clean_quote_patch(draft)
-
-
-def _merge_model_draft(base: Any, update: Any, latest_user_text: str, current_field: str = "") -> dict[str, Any]:
-    """Merge deterministic semantic capture first, then safe model extraction."""
-    base_clean = _semantic_capture(base, latest_user_text, current_field)
-    if _language_only_message(latest_user_text):
-        return base_clean
-
-    incoming = _clean_quote_patch(update)
-    # Deterministic captures from the current user turn are authoritative.
-    merged = _merge_quote_patch(base_clean, incoming)
-    protected = _semantic_capture(base_clean, latest_user_text, current_field)
-    merged = _merge_quote_patch(merged, protected)
-
-    if "company" not in base_clean and _looks_like_uniform_intent(latest_user_text):
-        # Never let generic intent like "أبي زي" become the company name.
-        candidate = str(merged.get("company", "") or "").lower()
-        if candidate and candidate in latest_user_text.strip().lower():
-            merged.pop("company", None)
-    return merged
-
-COLLECTION_FIELD_IDS = (
-    "company", "industry", "project", "uniforms", "color", "male_count",
-    "female_count", "sizes", "deadline", "branding", "logo_placement",
-    "logo_ready", "branding_notes", "name", "phone", "email", "area",
-    "followup", "contact_time", "notes",
-)
-
-def _draft_has_field(draft: dict[str, Any], field_id: str) -> bool:
-    if field_id == "uniforms":
-        items = draft.get("uniforms") if isinstance(draft.get("uniforms"), list) else []
-        return bool(items) and all(str(x.get("name", "")).strip() and int(x.get("qty", 0) or 0) >= 12 for x in items if isinstance(x, dict))
-    if field_id == "sizes":
-        sizes = draft.get("sizes") if isinstance(draft.get("sizes"), dict) else {}
-        return any(int(v or 0) > 0 for v in sizes.values())
-    if field_id in ("male_count", "female_count"):
-        return field_id in draft and isinstance(draft.get(field_id), int) and draft[field_id] >= 0
-    value = draft.get(field_id)
-    return value is not None and str(value).strip() != ""
-
-
-def _clean_field_status(raw: Any, draft: dict[str, Any], fallback: Any = None) -> dict[str, str]:
-    result: dict[str, str] = {}
-    fallback = fallback if isinstance(fallback, dict) else {}
-    for key, value in fallback.items():
-        if key in COLLECTION_FIELD_IDS and value in {"known", "unknown", "none"}:
-            if value != "known" or _draft_has_field(draft, key):
-                result[key] = value
-    raw = raw if isinstance(raw, dict) else {}
-    for key, value in raw.items():
-        if key not in COLLECTION_FIELD_IDS or value not in {"known", "unknown", "none"}:
-            continue
-        if value == "known" and not _draft_has_field(draft, key):
-            continue
-        result[key] = value
-    # Any valid concrete draft value is known, even if the model omitted the status.
-    for key in COLLECTION_FIELD_IDS:
-        if _draft_has_field(draft, key):
-            result[key] = "known"
-    return result
-
-
 def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     atype = str(raw.get("type", "")).strip()
     label = str(raw.get("label", "")).strip()[:80]
     value = str(raw.get("value", "")).strip()[:500]
-    follow_up = str(raw.get("follow_up", "") or "").strip()[:420]
     allowed = {"navigate", "add", "enquiry-list", "whatsapp", "quote-update"}
     if allow_prompt:
         allowed.add("prompt")
@@ -599,15 +364,12 @@ def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
         patch = _clean_quote_patch(raw.get("patch"))
         if not patch:
             return None
-        action = {
-            "label": label or "Confirm & prepare my enquiry",
+        return {
+            "label": label or "Confirm & fill my quote",
             "type": "quote-update",
             "value": "",
             "patch": patch,
         }
-        if follow_up:
-            action["follow_up"] = follow_up
-        return action
 
     if not label:
         label = {
@@ -627,18 +389,14 @@ def _clean_action(raw: Any, allow_prompt: bool = True) -> dict[str, Any] | None:
         value = "Hello ALF Uniforms, I need help with a uniform requirement."
     if atype == "enquiry-list":
         value = ""
-    action = {"label": label, "type": atype, "value": value}
-    if follow_up and atype == "navigate":
-        action["follow_up"] = follow_up
-    return action
+    return {"label": label, "type": atype, "value": value}
 
 
 def _clean_context(raw: Any, fallback: AgentContext) -> dict[str, Any]:
     raw = raw if isinstance(raw, dict) else {}
     last_uniform = str(raw.get("lastUniform", fallback.lastUniform) or "")
-    allowed_uniforms = set(UNIFORMS + [CUSTOM_UNIFORM])
-    if last_uniform and last_uniform not in allowed_uniforms:
-        last_uniform = fallback.lastUniform if fallback.lastUniform in allowed_uniforms else ""
+    if last_uniform and last_uniform not in UNIFORMS:
+        last_uniform = fallback.lastUniform if fallback.lastUniform in UNIFORMS else ""
     industry = str(raw.get("industry", fallback.industry) or "")[:120]
     try:
         quantity = int(raw.get("quantity", fallback.quantity) or 0)
@@ -648,298 +406,29 @@ def _clean_context(raw: Any, fallback: AgentContext) -> dict[str, Any]:
     return {"lastUniform": last_uniform, "industry": industry, "quantity": quantity}
 
 
-
-
-def _looks_like_uniform_intent(text: str) -> bool:
-    t = re.sub(r"\s+", " ", (text or "").strip().lower())
-    if not t:
-        return False
-    if t in {"زي", "ازياء", "أزياء", "يونيفورم", "يونيفورمات", "uniform", "uniforms"}:
-        return True
-    if re.search(r"(?:^|\s)(?:ابي|أبي|ابغى|أبغى|اريد|أريد|عايز|محتاج|احتاج|أحتاج|need|want)\s+(?:لي\s+)?(?:زي|ازياء|أزياء|يونيفورم|يونيفورمات|uniform|uniforms|ملابس\s+عمل)(?:\s|$)", t, flags=re.I):
-        return True
-    if re.search(r"(?:ازياء|أزياء|يونيفورمات?|ملابس\s+عمل)\s+(?:عمال|موظفين|طيارين|شيفات|امن|أمن|فريق)", t, flags=re.I):
-        return True
-    return bool(re.search(r"uniforms?\s+(?:for|for my|for our)\s+", t, flags=re.I))
-
-
-def _is_greeting(text: str) -> bool:
-    t = re.sub(r"[!؟?.,،]+$", "", (text or "").strip().lower())
-    if re.fullmatch(r"هلا+", t):
-        return True
-    return t in {"هلا", "هلا والله", "مرحبا", "مرحبًا", "السلام عليكم", "اهلين", "أهلين", "hi", "hello", "hey"}
-
-
-def _asks_uniform_types(text: str) -> bool:
-    t = (text or "").strip().lower()
-    return bool(re.search(r"(?:الأنواع|الانواع|انواع|أنواع|المتاح|متوفر|متاحة|available|categories|types)", t, flags=re.I))
-
-
-def _asks_for_recommendation(text: str) -> bool:
-    t = re.sub(r"\s+", " ", (text or "").strip().lower())
-    return bool(re.search(r"(?:اقترح|رشح|اختار|اختيار|انسب|أنسب|تنصح|مناسب|suggest|recommend|what do you suggest|which.*best|what.*best)", t, flags=re.I))
-
-
-def _is_casual_nudge(text: str) -> bool:
-    t = re.sub(r"[!؟?.,،]+$", "", (text or "").strip().lower())
-    return t in {"ركز", "اسمع", "اسمعني", "تمام", "اوكي", "أوكي", "طيب", "معاي", "معايا", "focus", "listen", "اسألني انت", "اسالني انت", "اسأل انت", "اسال انت", "ابدأ اسأل", "ابدأ اسال", "كمل انت", "كمّل انت", "ask me", "you ask", "lead me"}
-
-
-def _local_recommendation(payload: "ChatRequest") -> tuple[str, list[dict[str, Any]]]:
-    latest = payload.messages[-1].content if payload.messages else ""
-    draft = _semantic_capture(payload.draft_quote, latest, payload.collection.current_field)
-    project = str(draft.get("project", "") or "")
-    industry = str(draft.get("industry", "") or "")
-    combined = f"{latest} {project} {industry}".lower()
-    ar = payload.conversation_language == "ar"
-
-    # Ground crew is intentionally checked before pilot/aviation. A visitor may
-    # start by saying pilots and then clarify "أرضي"; the clarification wins.
-    if re.search(r"أرضي|ارضي|ground\s*crew|ground\s*staff", combined, flags=re.I):
-        if ar:
-            return (
-                "للطاقم الأرضي عندك خيارين منطقيين أكثر من غيرهم: لو الشغل فيه حركة وتشغيل وتحميل فـ Cargo Pants & Workwear أنسب؛ ولو الفريق يتعامل مع المسافرين أو واقف في كاونترات وخدمة عملاء فالبولو أو التي‑شيرت يطلع أرتب. لو وصفت لي دورهم اليومي بجملة، أختار لك واحد منهم بشكل أدق.",
-                [
-                    {"label":"عرض الـWorkwear","type":"navigate","value":"/pages/workwear"},
-                    {"label":"عرض البولو والتي‑شيرت","type":"navigate","value":"/pages/polo-t-shirts"},
-                ],
-            )
-        return (
-            "For airport ground crew, I’d narrow it to two sensible routes: Cargo Pants & Workwear for active operational roles, or Polos/T-shirts for customer-facing counters and service teams. Tell me what they do day to day and I’ll choose between them.",
-            [
-                {"label":"View Workwear","type":"navigate","value":"/pages/workwear"},
-                {"label":"View Polo & T-Shirts","type":"navigate","value":"/pages/polo-t-shirts"},
-            ],
-        )
-
-    if re.search(r"طيار|طيارين|pilot|pilots|airline|aviation", combined, flags=re.I):
-        if ar:
-            return (
-                "لو المقصود الطيارين أنفسهم، الأفضل نمشيه كـ Custom Uniform لأن الموقع ما عنده فئة جاهزة باسم زي طيارين. نقدر نبني الطلب على الستايل الرسمي، اللون، الشعار والكمية، وبعدها فريق ALF يراجعه معك. إذا تبي، أبدأ معك بالشكل العام أو الكمية.",
-                [{"label":"عرض الزي المخصص","type":"navigate","value":"/pages/custom-uniforms"}],
-            )
-        return (
-            "For the pilots themselves, I’d treat it as a Custom Uniform requirement because the site does not list a ready pilot-uniform category. We can define the formal look, color, branding and quantity for ALF to review. We can start with the look or the quantity.",
-            [{"label":"View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}],
-        )
-
-    if re.search(r"عمال|عامل|مخزن|تحميل|تشغيل|صيانة|لوجست|warehouse|worker|workers|labou?r|operations|maintenance|logistics", combined, flags=re.I):
-        if ar:
-            return (
-                "بما إن الزي للعمال، أنا أميل أبدأ معك بـ Cargo Pants & Workwear لأنه عملي للحركة والشغل اليومي. لو الفريق قدام العملاء أكثر من التشغيل، البولو والتي‑شيرت يطلع أنظف. لو شغلهم تشغيل وحركة، فالـWorkwear هو اختياري الأول.",
-                [
-                    {"label":"عرض الـWorkwear","type":"navigate","value":"/pages/workwear"},
-                    {"label":"عرض البولو والتي‑شيرت","type":"navigate","value":"/pages/polo-t-shirts"},
-                ],
-            )
-        return (
-            "For a workers team, I’d start with Cargo Pants & Workwear for active day-to-day work. If they are mainly customer-facing, polos and T-shirts can look cleaner.",
-            [
-                {"label":"View Workwear","type":"navigate","value":"/pages/workwear"},
-                {"label":"View Polo & T-Shirts","type":"navigate","value":"/pages/polo-t-shirts"},
-            ],
-        )
-    if re.search(r"مطعم|كافيه|مطبخ|شيف|restaurant|cafe|kitchen|chef|hospitality", combined, flags=re.I):
-        return (("لو الفريق مطعم أو مطبخ، أبدأ بزي الشيف والمرايل، ولو عندك استقبال أو خدمة عملاء أضيف لهم بولو موحد." if ar else "For a restaurant or kitchen team, I’d start with Chef Uniforms & Aprons, with polos as a clean option for front-of-house staff."), [{"label":"عرض زي الشيف","type":"navigate","value":"/pages/chef-uniforms"}] if ar else [{"label":"View Chef Uniforms","type":"navigate","value":"/pages/chef-uniforms"}])
-    if re.search(r"أمن|حراسة|security|guard", combined, flags=re.I):
-        return (("لو الفريق أمن أو حراسة، الزي الأمني هو الاختيار الطبيعي كبداية، وبعدها نضبط اللون والبراندنج حسب الجهة." if ar else "For a security team, Security Uniforms are the natural starting point, then we can tailor color and branding to the organization."), [{"label":"عرض الزي الأمني","type":"navigate","value":"/pages/security-uniforms"}] if ar else [{"label":"View Security Uniforms","type":"navigate","value":"/pages/security-uniforms"}])
-    if re.search(r"فعالية|فعاليات|معرض|ترويج|event|promo|promotion|exhibition", combined, flags=re.I):
-        return (("للفعاليات والترويج، Event & Promo Team Apparel هو الأقرب، والبولو بديل ممتاز لو تبي شكل أبسط وأكثر رسميّة." if ar else "For events and promotional teams, Event & Promo Team Apparel is the closest match; polos are a good alternative for a cleaner corporate look."), [{"label":"عرض زي الفعاليات","type":"navigate","value":"/pages/event-uniforms"}] if ar else [{"label":"View Event Apparel","type":"navigate","value":"/pages/event-uniforms"}])
-    if re.search(r"شركة|مكتب|استقبال|مبيعات|corporate|office|reception|sales", combined, flags=re.I):
-        return (("لفريق مكتب أو استقبال أو مبيعات، البولو والتي‑شيرت غالبًا أفضل بداية: شكله مرتب وسهل نطابقه مع ألوان وهوية الشركة." if ar else "For an office, reception or sales team, polos and T-shirts are usually the best starting point: clean, versatile and easy to match to the brand."), [{"label":"عرض البولو والتي‑شيرت","type":"navigate","value":"/pages/polo-t-shirts"}] if ar else [{"label":"View Polo & T-Shirts","type":"navigate","value":"/pages/polo-t-shirts"}])
-
-    return (("أكيد أرشح لك، بس ما أبي أعطيك اختيار عشوائي. وصف لي طبيعة شغل الفريق بجملة واحدة وأنا أعطيك اختياري الأول وبديله." if ar else "Absolutely — tell me in one line what the team does day to day and I’ll give you a first choice plus an alternative."), [])
-
-def _natural_local_reply(payload: "ChatRequest", reason: str = "") -> dict[str, Any]:
-    """Customer-first fail-safe that remains useful even when the model is unavailable."""
-    latest = payload.messages[-1].content if payload.messages else ""
-    ar = payload.conversation_language == "ar"
-    draft = _semantic_capture(payload.draft_quote, latest, payload.collection.current_field)
-    field_status = _clean_field_status({}, draft, payload.collection.resolved)
-    actions: list[dict[str, Any]] = []
-    t = (latest or "").strip().lower()
-    company_name = _extract_company_name(latest)
-    project = str(draft.get("project", "") or "")
-    uniforms = list(draft.get("uniforms") or [])
-
-    def pack(reply: str, acts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        return {
-            "reply": reply,
-            "actions": acts or [],
-            "auto_action": None,
-            "context": _clean_context({}, payload.context),
-            "draft_quote": draft,
-            "field_status": field_status,
-            "conversation_language": payload.conversation_language,
-            "model": MODEL,
-            "provider": "local-failsafe",
-            "fallback_reason": reason[:120],
-        }
-
-    if _is_greeting(latest) or re.match(r"^(?:هلا+|مرحبا|مرحبًا|أهلين|اهلين)\s+(?:أنا|انا)\s+", latest.strip(), flags=re.I):
-        name = str(draft.get("name", "") or "").strip()
-        if ar:
-            return pack(f"هلا {name} 👋 تشرفنا. قل لي شنو تحتاج وأنا أمشي معك." if name else "هلا 👋 حياك الله. قل لي شنو تحتاج وأنا أمشي معك.")
-        return pack(f"Hi {name} 👋 Nice to meet you. Tell me what you need and I’ll work through it with you." if name else "Hi 👋 Welcome. Tell me what you need and I’ll work through it with you.")
-
-    if _is_casual_nudge(latest):
-        if re.search(r"اسألني انت|اسالني انت|اسأل انت|اسال انت|ابدأ اسأل|ابدأ اسال|كمل انت|كمّل انت|ask me|you ask|lead me", latest, flags=re.I):
-            current = payload.collection.current_field or ""
-            prompts_ar = {
-                "company": "تمام، نبدأ من عندك: شنو اسم الشركة أو الجهة؟",
-                "industry": "تمام. طبيعة نشاط الشركة شنو تقريبًا؟",
-                "project": "حلو. الزي هذا لأي فريق أو وظيفة بالتحديد؟",
-                "uniforms": "أقدر أرشح لك بدل ما أخليك تختار عشوائي. شنو طبيعة شغل الفريق اليومية؟",
-                "color": "تمام. في لون معين في بالك أو لون مرتبط بهوية الشركة؟",
-            }
-            prompts_en = {
-                "company": "Sure — what is the company or organization name?",
-                "industry": "Sure — what kind of business is it?",
-                "project": "Great — which team or job role is the uniform for?",
-                "uniforms": "I can recommend instead of making you pick blindly. What does the team do day to day?",
-                "color": "Great. Do you already have a preferred color or brand color?",
-            }
-            return pack((prompts_ar if ar else prompts_en).get(current, "تمام، اسألني أو خلّيني أقودك من اللي ناقص عندي." if ar else "Sure — I can lead from the most useful missing detail."))
-        return pack("معك ومركز 👌 كمل، شنو في بالك؟" if ar else "I’m with you 👍 Go ahead — what’s on your mind?")
-
-    # Short clarification after a pilot/ground-crew disambiguation.
-    if re.fullmatch(r"(?:ارضي|أرضي|طاقم ارضي|طاقم أرضي|ground|ground crew|ground staff)", t, flags=re.I):
-        reply, actions = _local_recommendation(payload)
-        return pack(reply, actions)
-    if re.fullmatch(r"(?:طيارين? فعليا|طيارين? فعليًا|طيارين? رسميين?|pilots?|formal pilots?)", t, flags=re.I):
-        reply, actions = _local_recommendation(payload)
-        return pack(reply, actions)
-
-    if re.fullmatch(r"(?:شركتي|الشركة|الشركه|اسم الشركة|اسم الشركه|my company|company)", t, flags=re.I):
-        return pack("تمام، شنو اسم الشركة؟" if ar else "Sure — what’s the company name?")
-
-    if company_name:
-        return pack((f"تمام، سجلت اسم الشركة: {company_name}. قل لي شنو تحتاج لها بالضبط وأنا أرتب الخيارات معك." if ar else f"Got it — I have the company as {company_name}. Tell me what you need for the team and I’ll help narrow the options."))
-
-    # Multi-fact team split / total quantity.
-    counts = _extract_team_counts(latest)
-    total_qty = _extract_total_quantity(latest)
-    if counts:
-        bits = []
-        if total_qty:
-            bits.append((f"الإجمالي {total_qty}" if ar else f"total {total_qty}"))
-        if "male_count" in counts:
-            bits.append((f"{counts['male_count']} رجال" if ar else f"{counts['male_count']} men"))
-        if "female_count" in counts:
-            bits.append((f"{counts['female_count']} سيدات" if ar else f"{counts['female_count']} women"))
-        joined = "، ".join(bits)
-        if re.search(r"طيار|pilot", project, flags=re.I):
-            return pack((f"تمام، ثبت عندي {joined}. وبما إن الطلب للطيارين، نقدر نمشيه كـ Custom Uniform بدل ما نختار فئة غير مناسبة من الكتالوج. عندكم لون أو هوية معينة للزي؟" if ar else f"Got it — I have {joined}. Since this is for pilots, we can treat it as a Custom Uniform requirement instead of forcing a mismatched catalog category. Do you have a preferred color or brand look?"), [{"label":"عرض الزي المخصص" if ar else "View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}])
-        return pack((f"تمام، ثبت عندي {joined}." if ar else f"Got it — I have {joined}."))
-
-    if _asks_for_recommendation(latest):
-        reply, actions = _local_recommendation(payload)
-        return pack(reply, actions)
-
-    asks_types = _asks_uniform_types(latest) or bool(re.search(r"(?:ازياء|أزياء|يونيفورمات|ملابس\s+عمل).*(?:عندكم|متوفر|متاحة|available|types)|(?:ايه|إيه|وش|شنو|ما).*(?:الازياء|الأزياء|الأنواع|انواع|الخيارات|خيارات)", t, flags=re.I))
-    if asks_types:
-        if re.search(r"أرضي|ارضي|ground", project, flags=re.I):
-            return pack(("للطاقم الأرضي، أقرب خيارين فعليًا هم: Cargo Pants & Workwear لو الشغل تشغيلي وفيه حركة، أو Polo Shirts & T‑Shirts لو الفريق يتعامل مع المسافرين وواجهة الخدمة. إذا قلت لي دورهم اليومي أقول لك أي واحد أختار." if ar else "For ground crew, the two most relevant options are Cargo Pants & Workwear for active operational roles, or Polo Shirts & T-Shirts for customer-facing service teams. Tell me what they do day to day and I’ll choose between them."), [
-                {"label":"عرض الـWorkwear" if ar else "View Workwear","type":"navigate","value":"/pages/workwear"},
-                {"label":"عرض البولو" if ar else "View Polo","type":"navigate","value":"/pages/polo-t-shirts"},
-            ])
-        if re.search(r"طيار|pilot|airline|aviation", f"{latest} {project}", flags=re.I):
-            return pack(("للطيارين الرسميين ما عندنا فئة جاهزة باسم «زي طيارين» داخل الكتالوج، فالأصح نخليه Custom Uniform. أما لو كنت تقصد الطاقم الأرضي فالأقرب Workwear أو Polo حسب طبيعة الدور." if ar else "For formal pilots, the current catalog does not list a dedicated pilot category, so the right route is Custom Uniform. For ground crew, Workwear or Polos are the closer options depending on the role."), [{"label":"عرض الزي المخصص" if ar else "View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}])
-        return pack(("أكيد. الموجود عند ALF يشمل بولو وتي‑شيرت، زي شيف ومرايل، قبعات وإكسسوارات شيف، كارجو وملابس عمل، زي أمني، وملابس فرق الفعاليات والترويج. وإذا احتياجك خارج الفئات دي نقدر نمشيه كـ Custom Uniform." if ar else "ALF offers polos and T-shirts, chef uniforms and aprons, chef caps/accessories, cargo/workwear, security uniforms, and event/promo apparel. If your requirement sits outside those categories, we can handle it as a Custom Uniform enquiry."), [{"label":"عرض كل الأنواع" if ar else "Browse all uniforms","type":"navigate","value":"/pages/custom-uniforms"}])
-
-    if _looks_like_uniform_intent(latest) or re.search(r"(?:ازياء|أزياء|يونيفورمات|ملابس\s+عمل|زي\s+طيار)", t, flags=re.I):
-        reply, actions = _local_recommendation(payload)
-        return pack(reply, actions)
-
-    # A direct quantity can complete the one selected/pending uniform.
-    if total_qty >= 12:
-        if uniforms:
-            item = uniforms[0]
-            return pack((f"تمام، ثبت عندي {total_qty} قطعة من {item.get('name','الزي')}. بالنسبة للشكل، في لون معين أو لون من هوية الشركة تحب نمشي عليه؟" if ar else f"Great — I have {total_qty} pieces for {item.get('name','the uniform')}. Do you have a preferred color or brand color for the look?"))
-        if re.search(r"طيار|pilot", project, flags=re.I):
-            return pack((f"تمام، العدد {total_qty} قطعة. وبما إن الطلب للطيارين، أسجله كـ Custom Uniform بدل ما أختار لك فئة غلط. في لون أو ستايل رسمي معين في بالك؟" if ar else f"Got it — {total_qty} pieces. Since this is for pilots, I’ll treat it as a Custom Uniform requirement rather than force the wrong category. Do you have a preferred color or formal style?"), [{"label":"عرض الزي المخصص" if ar else "View custom uniforms","type":"navigate","value":"/pages/custom-uniforms"}])
-
-    if re.search(r"(price|pricing|cost|kwd|دينار|سعر|تكلفة)", t):
-        return pack("السعر يتحدد حسب النوع والكمية والمقاسات والبراندنج، وفريق ALF يأكد عرض السعر بعد مراجعة الطلب. نقدر نضبط المواصفات هنا أول عشان يوصلهم Brief واضح." if ar else "Pricing depends on uniform type, quantity, sizes and branding, and ALF confirms the quotation after reviewing the requirement. I can help you shape a clear brief first.")
-    if re.search(r"(minimum|moq|اقل كمية|أقل كمية)", t):
-        return pack("الحد الأدنى يبدأ من 12 قطعة لكل نوع يونيفورم." if ar else "The minimum starts from 12 pieces per uniform type.")
-    if re.search(r"(logo|brand|branding|embroider|embroidery|print|printing|طباعة|تطريز|لوجو|شعار)", t):
-        return pack("متوفر تطريز وطباعة. الأنسب يعتمد على نوع الزي وشكل الشعار والاستخدام؛ إذا قلت لي القطعة اللي اخترتها أرشح لك بين الاثنين." if ar else "ALF offers embroidery and printing. The better option depends on the garment, logo and use; tell me the item and I’ll help you choose.", [{"label":"خيارات البراندنج" if ar else "Branding options","type":"navigate","value":"/pages/embroidery-printing"}])
-
-    # Never return an empty reply. If the model is down, keep the conversation alive
-    # instead of forcing the storefront into a repetitive field prompt.
-    current = (payload.collection.current_field or "").strip()
-    if current == "color":
-        return pack("تمام. وبالنسبة للشكل العام، في لون معين في بالك أو لون مرتبط بهوية الشركة؟" if ar else "Great. Do you have a preferred color or a brand color for the overall look?")
-    if current == "uniforms":
-        reply, actions = _local_recommendation(payload)
-        return pack(reply, actions)
-    return pack("فاهمك. كمل لي الفكرة براحتك وأنا أرد عليك على نفس النقطة، ونرتب تفاصيل الطلب أثناء الكلام بدون ما نحولها لاستبيان." if ar else "I’m with you. Keep going and I’ll respond to the point you’re making; we can collect the order details naturally along the way.")
-
-def _sanitize_reply_text(reply: str, payload: ChatRequest) -> str:
-    text = (reply or "").strip()
-    text = text.replace("&#x20;", " ").replace("\\-", "-")
-    # Never let the model invent clickable destinations or fake quote/order URLs.
-    text = re.sub(r"\[([^\]]+)\]\((?:https?://|/)[^)]+\)", r"\1", text, flags=re.I)
-    text = re.sub(r"https?://\S+", "", text, flags=re.I)
-    text = re.sub(r"\s+", " ", text).strip()
-
-    latest = payload.messages[-1].content if payload.messages else ""
-    ar = payload.conversation_language == "ar"
-    urgent = bool(re.search(r"(?:بكره|بكرة|غدًا|غدا|tomorrow|today|اليوم|النهارده)", latest, flags=re.I))
-    promise = bool(re.search(
-        r"(?:سنجهز|سوف\s+نجهز|سيكون\s+جاهز|هتكون\s+جاهز|هتكون\s+جاهزة|جاهز\s+للتسليم|ready\s+(?:by|for)|will\s+be\s+ready|we(?:'|’)ll\s+(?:have|prepare).*ready)",
-        text,
-        flags=re.I,
-    ))
-    if urgent and promise:
-        text = ("تمام، أسجل هذا كموعد مستهدف، لكن فريق ALF لازم يؤكد إمكانية التنفيذ بعد مراجعة الكمية والتخصيص."
-                if ar else
-                "I’ll treat that as your target deadline, but the ALF team still needs to confirm feasibility after reviewing the quantity and customization.")
-
-    # A provider should never claim a website action happened; the storefront owns actions.
-    if re.search(r"(?:أعددنا\s+عرض\s+السعر|جهزت\s+عرض\s+السعر|تم\s+فتح|فتحت\s+لك|لقد\s+أعددنا|your\s+quote\s+is\s+ready|i(?:'|’)ve\s+opened|i\s+opened)", text, flags=re.I):
-        if re.search(r"(?:quote|quotation|عرض\s+السعر|الكوت|صفحة)", latest, flags=re.I):
-            text = "أكيد — أقدر أوصلك للمسار الصحيح، والموقع نفسه هيكمل الخطوة المناسبة من هنا." if ar else "Absolutely — I can take you to the right flow, and the website will handle the next step from here."
-
-    return text[:2400]
-
-
 @app.get("/")
 def root() -> dict[str, str]:
     return {"service": APP_NAME, "status": "online", "model": MODEL}
 
 
 @app.get("/health")
-def health() -> dict[str, Any]:
-    return {"status": "ok", "version": "2.1.0", "architecture": "agent-orchestrated-natural-dialogue", "model": MODEL, "ai_configured": bool(GROQ_API_KEY)}
+def health() -> dict[str, str]:
+    return {"status": "ok", "model": MODEL}
 
 
 @app.post("/api/chat")
 def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     _rate_limit(request)
-    latest_user_text = payload.messages[-1].content if payload.messages else ""
-
-    # Deterministic state comes first. This prevents a language model from
-    # forgetting, overwriting, or re-asking facts that the storefront already captured.
-    draft_quote = _semantic_capture(payload.draft_quote, latest_user_text, payload.collection.current_field)
-    field_status = _clean_field_status({}, draft_quote, payload.collection.resolved)
-
     if not GROQ_API_KEY:
-        local = _natural_local_reply(payload, reason="missing_api_key")
-        local["draft_quote"] = draft_quote
-        local["field_status"] = field_status
-        return local
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured on the server.")
 
+    enquiry_names = [item.name for item in payload.enquiry if item.name in UNIFORMS]
     runtime_context = {
-        "page": {"path": payload.page.path, "label": payload.page.label},
-        "draft_quote": draft_quote,
-        "collection": {
-            "active": payload.collection.active,
-            "current_field": payload.collection.current_field,
-            "resolved": field_status,
-        },
-        "conversation_language": payload.conversation_language,
+        "current_page": payload.page.model_dump(),
+        "saved_enquiry_uniforms": enquiry_names,
+        "session_context": payload.context.model_dump(),
+        "quote": payload.quote if isinstance(payload.quote, dict) else {},
+        "locale": payload.locale,
     }
 
     messages: list[dict[str, str]] = [
@@ -949,61 +438,44 @@ def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
             "content": "CURRENT WEBSITE STATE:\n" + json.dumps(runtime_context, ensure_ascii=False),
         },
     ]
-    # Enough history for conversational continuity without burning the daily token budget.
-    messages.extend({"role": m.role, "content": m.content} for m in payload.messages[-12:])
+    messages.extend({"role": m.role, "content": m.content} for m in payload.messages[-24:])
 
-    def run_model(model: str) -> str:
-        client = Groq(api_key=GROQ_API_KEY, timeout=20.0, max_retries=0)
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.55,
-            "max_completion_tokens": 320,
-        }
-        # Qwen's non-thinking mode is better suited to a quick natural sales conversation.
-        if model.startswith("qwen/"):
-            kwargs.update({"reasoning_effort": "none", "top_p": 0.75})
-        elif model.startswith("openai/gpt-oss"):
-            kwargs.update({"reasoning_effort": "low", "top_p": 0.9})
-        completion = client.chat.completions.create(**kwargs)
-        return (completion.choices[0].message.content or "").strip()
-
-    provider_model = MODEL
     try:
-        reply = run_model(MODEL)
-        if not reply:
-            raise ValueError("empty_model_reply")
-    except Exception as first_exc:
-        first_status = getattr(first_exc, "status_code", None)
-        print(f"[ALF primary model failed] model={MODEL} status={first_status} error={first_exc}")
-        try:
-            provider_model = FALLBACK_MODEL
-            reply = run_model(FALLBACK_MODEL)
-            if not reply:
-                raise ValueError("empty_fallback_reply")
-        except Exception as second_exc:
-            second_status = getattr(second_exc, "status_code", None)
-            print(f"[ALF fallback model failed] model={FALLBACK_MODEL} status={second_status} error={second_exc}")
-            local = _natural_local_reply(payload, reason=f"provider_failure:{second_status or first_status or 'unknown'}")
-            local["draft_quote"] = draft_quote
-            local["field_status"] = field_status
-            return local
+        client = Groq(api_key=GROQ_API_KEY)
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            temperature=0.25,
+            max_completion_tokens=900,
+            response_format={"type": "json_object"},
+        )
+        content = completion.choices[0].message.content or ""
+        data = _safe_json(content)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Do not leak keys or provider internals to the storefront.
+        raise HTTPException(status_code=502, detail="The AI service is temporarily unavailable.") from exc
 
-    # Keep provider output clean; accidental surrounding quotes are common with some models.
-    reply = reply.strip()
-    if len(reply) >= 2 and reply[0] == reply[-1] == '"':
-        reply = reply[1:-1].strip()
-    reply = _sanitize_reply_text(reply, payload)
+    reply = str(data.get("reply", "")).strip()[:3000]
+    if not reply:
+        reply = "I can help you choose the right ALF uniform and continue the correct enquiry flow."
+
+    actions = []
+    for raw in (data.get("actions") or [])[:3]:
+        cleaned = _clean_action(raw, allow_prompt=True)
+        if cleaned:
+            actions.append(cleaned)
+
+    auto_action = _clean_action(data.get("auto_action"), allow_prompt=False) if data.get("auto_action") else None
+    if auto_action and auto_action.get("type") == "quote-update":
+        auto_action = None
+    context = _clean_context(data.get("context"), payload.context)
 
     return {
         "reply": reply,
-        "actions": [],
-        "auto_action": None,
-        "context": _clean_context({}, payload.context),
-        "draft_quote": draft_quote,
-        "field_status": field_status,
-        "conversation_language": payload.conversation_language,
-        "model": provider_model,
-        "provider": "groq",
+        "actions": actions,
+        "auto_action": auto_action,
+        "context": context,
+        "model": MODEL,
     }
-

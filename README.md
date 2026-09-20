@@ -1,30 +1,45 @@
-# ALF Groq AI Agent Backend V11 — Agent Orchestrator
+# ALF Uniforms AI Agent Backend V2
 
-This build keeps the AI conversational while the Shopify theme owns the reliable agent behavior.
+FastAPI backend for the ALF Shopify website assistant using Groq.
 
-## What changed
-- `openai/gpt-oss-20b` is the default production model; `qwen/qwen3.6-27b` is fallback.
-- The model does **not** control navigation, quote submission, form filling, or the next required field.
-- The model answers naturally in the active language; the storefront appends exactly one next enquiry question when required.
-- The model is explicitly forbidden from inventing URLs, quote IDs, order IDs, delivery guarantees, or pretending a page/form action already happened.
-- Urgent dates such as “tomorrow” are treated as requested targets only; ALF still has to confirm feasibility.
-- Improved Arabic context extraction for workers, engineering, company naming, girls/women and men counts.
-- Provider replies are cleaned before reaching the storefront.
+## What V2 adds
 
-## Recommended Render environment
+The AI can now understand real Get a Quote details from normal conversation and prepare a structured form update for:
 
-```text
-GROQ_MODEL=openai/gpt-oss-20b
-GROQ_FALLBACK_MODEL=qwen/qwen3.6-27b
-```
+- Uniform type + quantity
+- Company and industry
+- Project/team description
+- Color and deadline
+- Male/female counts
+- Size breakdown (S / M / L / XL / XXL / Other)
+- Branding method
+- Logo placement and logo readiness
+- Branding notes
+- Contact name, phone, email and Kuwait area
+- Follow-up method and best contact time
+- Additional notes
 
-Keep the existing `GROQ_API_KEY` and Render URL.
+Nothing is written into the quotation silently. The AI first summarizes what it understood and returns a **Confirm & fill my quote** action. The Shopify theme applies the fields only after the visitor clicks that confirmation.
 
-## Deploy
-Replace the current backend repository files with this package, commit/push, and let the same Render service redeploy.
+## Render update
 
-After deployment `/health` should report:
+Replace the previous backend files with this V2 package and redeploy the same Render service. Keep your existing environment variables; you do not need a new URL.
 
-```json
-{"version":"2.1.0","architecture":"agent-orchestrated-natural-dialogue"}
-```
+- Runtime: Python 3
+- Build command: `pip install -r requirements.txt`
+- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- Health check: `/health`
+
+## Environment variables
+
+- `GROQ_API_KEY` — your Groq API key. Keep it in Render only.
+- `GROQ_MODEL` — default `openai/gpt-oss-20b`.
+- `ALLOWED_ORIGINS` — e.g. `https://alf-uniforms.myshopify.com`
+- `RATE_LIMIT_PER_MINUTE` — default 30.
+
+## Endpoints
+
+- `GET /health`
+- `POST /api/chat`
+
+The backend remains stateless. Chat history, active-session memory, the saved Enquiry List, and confirmed quote patches are handled by the Shopify theme/browser.
