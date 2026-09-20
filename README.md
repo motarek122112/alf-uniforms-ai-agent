@@ -43,3 +43,7 @@ Replace the previous backend files with this V2 package and redeploy the same Re
 - `POST /api/chat`
 
 The backend remains stateless. Chat history, active-session memory, the saved Enquiry List, and confirmed quote patches are handled by the Shopify theme/browser.
+
+
+## V3 language / conversation update
+The agent now keeps one primary language per reply, follows the customer's current language instead of the site UI language, uses cleaner line-broken summaries, preserves prior answers, and keeps action labels in the same language as the reply. No environment-variable changes are required from V2.
