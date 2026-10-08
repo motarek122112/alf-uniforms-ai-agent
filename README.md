@@ -1,24 +1,35 @@
-# ALF Groq AI Agent Render Backend V4 — GPT Style
+# ALF Groq AI Agent Backend V4.1 — Compatibility Fix
 
-Compatible with ALF Uniforms Shopify Theme V22.
+## Required Render environment
+Set ONE of these to your Groq key (GROQ_API_KEY is recommended):
+- GROQ_API_KEY
+- GROQ_KEY
+- GROQ_API_TOKEN
+- GROQ_TOKEN
 
-## Render environment variables
-Required:
-- `GROQ_API_KEY` = your Groq API key
+Optional:
+- GROQ_MODEL (default: openai/gpt-oss-20b)
+- GROQ_FALLBACK_MODEL
 
-Recommended:
-- `GROQ_MODEL` = `openai/gpt-oss-20b` (or your existing working Groq model)
-- `GROQ_FALLBACK_MODEL` = optional second Groq model
-- `ALLOWED_ORIGINS` = comma-separated storefront origins, for example `https://alf-uniforms-kw.myshopify.com`
+The service automatically falls back through:
+- openai/gpt-oss-20b
+- openai/gpt-oss-120b
+- qwen/qwen3.8-27b
 
-## Render settings
-- Build command: `pip install -r requirements.txt`
-- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-- Health check: `/health`
+## Render
+Build:
+`pip install -r requirements.txt`
 
-The service exposes:
-- `GET /health`
-- `POST /api/chat`
+Start (recommended):
+`uvicorn main:app --host 0.0.0.0 --port $PORT`
 
-The chat contract is JSON:
-`{ reply, actions, auto_action, context }`
+Also compatible with:
+`python app.py`
+`python server.py`
+
+## Diagnostics
+- GET /health
+- GET /health/groq
+- POST /api/chat
+
+CORS is intentionally open to storefront browser origins; no credentials are accepted and the Groq key remains server-side.
