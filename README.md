@@ -33,3 +33,17 @@ Also compatible with:
 - POST /api/chat
 
 CORS is intentionally open to storefront browser origins; no credentials are accepted and the Groq key remains server-side.
+
+
+## v4.2 quote bridge fix
+- Canonical Get a Quote patch schema.
+- Dedicated confirmed-detail extractor for quote fill requests.
+- Merges all confirmed details into one quote-update patch.
+- Normalizes uniforms, industries, sizes, branding and aliases.
+
+Validated with canonical security quote example:
+- Security Uniforms — 50
+- Industry: Security
+- Color: Blue
+- Sizes: S 20 / M 20 / L 10
+- Logo placement: chest and back

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from groq import Groq
 
-SERVICE = "alf-uniforms-ai-agent-v4.1"
+SERVICE = "alf-uniforms-ai-agent-v4.2"
 
 def _first_env(*names: str) -> str:
     for name in names:
@@ -38,7 +38,7 @@ DEFAULT_MODEL_FALLBACKS = [
     "qwen/qwen3.8-27b",
 ]
 
-app = FastAPI(title="ALF Uniforms AI Agent", version="4.1.0")
+app = FastAPI(title="ALF Uniforms AI Agent", version="4.2.0")
 
 # Public storefront backend: API key is kept server-side, credentials are not accepted.
 # Allowing all browser origins removes stale-domain CORS failures when Shopify domain/theme changes.
@@ -104,7 +104,15 @@ Return zero or more actions only when useful:
 - navigate: {{"label":"Open Chef Uniforms","type":"navigate","value":"/pages/chef-uniforms"}}
 - add: {{"label":"Add Chef Uniforms","type":"add","value":"Chef Uniforms & Aprons"}}
 - enquiry-list: {{"label":"View enquiry list","type":"enquiry-list"}}
-- quote-update: {{"label":"Fill confirmed details","type":"quote-update","patch":{{...}}}}
+- quote-update: {{"label":"Fill confirmed details","type":"quote-update","patch":{{
+    "uniforms":[{{"name":"Security Uniforms","qty":50}}],
+    "industry":"Security",
+    "project":"Complete security uniforms for 50 staff",
+    "color":"Blue",
+    "sizes":{{"S":20,"M":20,"L":10}},
+    "logo_placement":"Chest and back",
+    "branding_notes":"Company logo on chest and back"
+  }}}}
 - whatsapp: {{"label":"WhatsApp ALF","type":"whatsapp","value":"message"}}
 - prompt: {{"label":"Restaurant / café","type":"prompt","value":"I need uniforms for a restaurant team"}}
 
@@ -114,6 +122,14 @@ ACTION RULES
 - Explicit add/save requests may use add as auto_action.
 - Never auto-submit a quote or WhatsApp.
 - quote-update must remain clickable, not automatic.
+- For quote-update, use ONLY these canonical patch keys when confirmed: uniforms, company, industry, project, color, deadline, male_count, female_count, sizes, branding, logo_placement, logo_ready, branding_notes, name, phone, email, area, followup, contact_time, notes.
+- uniforms must be a list of objects with canonical ALF category name + qty. Canonical names: Polo Shirts & T-Shirts, Chef Uniforms & Aprons, Chef Caps & Accessories, Cargo Pants & Workwear, Security Uniforms, Corporate Shirts, Event & Promo Team Apparel, Other.
+- industry must be one of: Restaurant / Café, Corporate Office, Security, Retail, Events / Promotions, Service / Operations, Other.
+- sizes must be an object like {{"S":20,"M":20,"L":10,"XL":0,"XXL":0}} and include only sizes actually confirmed.
+- branding must be exactly Embroidery, Printing, or Need ALF recommendation, and only if the customer actually confirmed the method.
+- logo_ready must be exactly Yes — ready to send on WhatsApp or No — need guidance, and only if confirmed.
+- When the customer asks to prepare/fill the quote, include ALL confirmed details from the conversation in ONE quote-update patch, not one field at a time.
+- Do not omit a confirmed uniform, quantity, color, size breakdown, industry, or logo placement when preparing the quote.
 - Never claim an action happened unless it is auto_action or the user clicked it.
 
 MEMORY
@@ -160,6 +176,130 @@ def _extract_json(text: str) -> Dict[str, Any]:
             return json.loads(text[start:end+1])
         raise
 
+
+def _canonical_uniform_name(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    for item in UNIFORMS:
+        if item["name"].lower() == raw.lower():
+            return item["name"]
+    t = raw.lower()
+    if re.search(r"security|guard|امن|أمن", t): return "Security Uniforms"
+    if re.search(r"chef|kitchen|cook|مطبخ|شيف", t): return "Chef Uniforms & Aprons"
+    if re.search(r"cargo|workwear|warehouse|maintenance|operations|مخزن|صيانة|تشغيل", t): return "Cargo Pants & Workwear"
+    if re.search(r"event|promo|activation|exhibition|فعالية|معرض", t): return "Event & Promo Team Apparel"
+    if re.search(r"corporate shirt|office shirt|قميص", t): return "Corporate Shirts"
+    if re.search(r"polo|t-?shirt|تيشيرت|بولو", t): return "Polo Shirts & T-Shirts"
+    return raw[:120]
+
+def _canonical_industry(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw: return ""
+    t = raw.lower()
+    if re.search(r"security|guard|امن|أمن", t): return "Security"
+    if re.search(r"restaurant|cafe|café|hospitality|مطعم|كافيه", t): return "Restaurant / Café"
+    if re.search(r"corporate|office|reception|sales|مكتب|شركة", t): return "Corporate Office"
+    if re.search(r"retail|shop|store|متجر", t): return "Retail"
+    if re.search(r"event|promotion|promo|فعالية|معرض", t): return "Events / Promotions"
+    if re.search(r"service|operation|warehouse|maintenance|logistics|خدمات|تشغيل|مخزن|صيانة", t): return "Service / Operations"
+    allowed=["Restaurant / Café","Corporate Office","Security","Retail","Events / Promotions","Service / Operations","Other"]
+    return next((x for x in allowed if x.lower()==t), raw[:120])
+
+def _canonical_branding(value: Any) -> str:
+    raw=str(value or "").strip(); t=raw.lower()
+    if re.search(r"embroider|تطريز", t): return "Embroidery"
+    if re.search(r"print|طباعة", t): return "Printing"
+    if re.search(r"recommend|advise|اقتراح|رشح", t): return "Need ALF recommendation"
+    return raw[:120]
+
+def _canonical_logo_ready(value: Any) -> str:
+    if isinstance(value,bool): return "Yes — ready to send on WhatsApp" if value else "No — need guidance"
+    raw=str(value or "").strip(); t=raw.lower()
+    if re.search(r"^yes$|ready|جاهز|عندي.*(?:لوجو|شعار)",t): return "Yes — ready to send on WhatsApp"
+    if re.search(r"^no$|not ready|need guidance|مش جاهز|غير جاهز",t): return "No — need guidance"
+    return raw[:160]
+
+def _normalize_sizes(value: Any) -> Dict[str,int]:
+    out: Dict[str,int]={}
+    if isinstance(value,dict):
+        for k,v in value.items():
+            key=re.sub(r"^size[_\\s-]*","",str(k),flags=re.I).upper(); label="Other" if key=="OTHER" else key
+            if label in {"S","M","L","XL","XXL","Other"}:
+                try: out[label]=max(0,int(round(float(v))))
+                except Exception: pass
+    elif isinstance(value,list):
+        for item in value:
+            if not isinstance(item,dict): continue
+            label=str(item.get("size") or item.get("label") or item.get("name") or "").upper()
+            try: qty=max(0,int(round(float(item.get("qty") or item.get("quantity") or item.get("count") or 0))))
+            except Exception: continue
+            if label in {"S","M","L","XL","XXL"}: out[label]=qty
+    return out
+
+def _normalize_quote_patch(patch: Any) -> Dict[str,Any]:
+    if not isinstance(patch,dict): return {}
+    sources=[patch]+[patch[k] for k in ("fields","details","quote","quote_fields","form") if isinstance(patch.get(k),dict)]
+    def pick(*names):
+        for src in sources:
+            for name in names:
+                if name in src and src[name] not in (None,""): return src[name]
+        return None
+    out: Dict[str,Any]={}
+    aliases={
+      "company":("company","company_name","business","business_name"), "industry":("industry","sector","business_type"),
+      "project":("project","project_description","team","team_type","requirement","requirements"), "color":("color","colour","preferred_color","uniform_color"),
+      "deadline":("deadline","delivery_deadline","required_date","delivery_date","timeline"), "male_count":("male_count","men","male"), "female_count":("female_count","women","female"),
+      "logo_placement":("logo_placement","logo_position","placement","logoPlacement"), "logo_ready":("logo_ready","artwork_ready","logo_available"),
+      "branding_notes":("branding_notes","branding_details","logo_notes"), "name":("name","contact_name","customer_name"), "phone":("phone","whatsapp","mobile","contact_phone"),
+      "email":("email","contact_email"), "area":("area","location","area_in_kuwait"), "followup":("followup","preferred_followup","contact_method"),
+      "contact_time":("contact_time","best_time","best_contact_time"), "notes":("notes","additional_notes","comments")}
+    for target,names in aliases.items():
+        val=pick(*names)
+        if val is not None: out[target]=val
+    if "industry" in out: out["industry"]=_canonical_industry(out["industry"])
+    if "logo_ready" in out: out["logo_ready"]=_canonical_logo_ready(out["logo_ready"])
+    branding=pick("branding","branding_method","brand_method","decoration_method")
+    if branding is not None: out["branding"]=_canonical_branding(branding)
+    sizes=_normalize_sizes(pick("sizes","size_breakdown","size_distribution","size_breakdown_map"))
+    for label in ("S","M","L","XL","XXL"):
+        direct=pick(f"size_{label.lower()}",f"size_{label}",label)
+        if direct is not None:
+            try: sizes[label]=max(0,int(round(float(direct))))
+            except Exception: pass
+    if sizes: out["sizes"]=sizes
+    uniforms=[]; raw_uniforms=pick("uniforms","items","uniform_requirements","products")
+    if isinstance(raw_uniforms,list):
+        for item in raw_uniforms:
+            if not isinstance(item,dict): continue
+            name=_canonical_uniform_name(item.get("name") or item.get("uniform") or item.get("type") or item.get("product"))
+            if not name: continue
+            try: qty=int(round(float(item.get("qty") or item.get("quantity") or item.get("count") or 0)))
+            except Exception: qty=0
+            uniforms.append({"name":name,"qty":max(0,qty)})
+    if not uniforms:
+        name=_canonical_uniform_name(pick("uniform","uniform_type","uniform_name","category","product"))
+        if name:
+            try: qty=int(round(float(pick("qty","quantity","pieces","total_quantity","count") or 0)))
+            except Exception: qty=0
+            uniforms.append({"name":name,"qty":max(0,qty)})
+    if uniforms: out["uniforms"]=uniforms
+    allowed={"uniforms","company","industry","project","color","deadline","male_count","female_count","sizes","branding","logo_placement","logo_ready","branding_notes","name","phone","email","area","followup","contact_time","notes"}
+    return {k:v for k,v in out.items() if k in allowed and v not in (None,"",[])}
+
+def _quote_fill_requested(payload: ChatPayload) -> bool:
+    if not payload.messages: return False
+    text=str(payload.messages[-1].content or "").strip().lower()
+    return bool(re.search(r"(?:fill|prepare|build|complete|prefill|put).*(?:quote|form|details)|(?:quote|form).*(?:fill|prepare|complete)|جهز(?:ها|ه|لي|لنا)?|جهز.*(?:طلب|عرض|سعر)|امل[اأ]?|عب[ىي]|حط.*(?:النموذج|الفورم)|املا|إملا|املأ",text,re.I))
+
+def _extract_quote_patch_sync(client: Groq, model: str, payload: ChatPayload) -> Dict[str,Any]:
+    extraction_prompt="""Extract ONLY customer details already confirmed in the conversation for the ALF Get a Quote form. Do not invent missing details. If the assistant suggested something but the customer never confirmed it, omit it. If the customer explicitly agreed to a summary, facts inside that summary count as confirmed. Return JSON only as {\"patch\":{...}}. Allowed patch keys: uniforms, company, industry, project, color, deadline, male_count, female_count, sizes, branding, logo_placement, logo_ready, branding_notes, name, phone, email, area, followup, contact_time, notes. uniforms must use canonical ALF names and qty. industry must be one of Restaurant / Café, Corporate Office, Security, Retail, Events / Promotions, Service / Operations, Other. sizes is an object keyed S/M/L/XL/XXL. Omit unknown keys entirely."""
+    messages=[{"role":"system","content":extraction_prompt}]
+    for m in payload.messages[-40:]: messages.append({"role":"assistant" if m.role=="assistant" else "user","content":str(m.content or "")[:3500]})
+    messages.append({"role":"system","content":"Existing quote state (empty/default values are not confirmed):\n"+json.dumps(payload.quote,ensure_ascii=False,default=str)[:10000]})
+    response=_completion_for_model(client,model,messages); data=_extract_json(response.choices[0].message.content or "")
+    return _normalize_quote_patch(data.get("patch") if isinstance(data,dict) else {})
+
 def _sanitize_action(action: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(action, dict):
         return None
@@ -185,10 +325,10 @@ def _sanitize_action(action: Any) -> Optional[Dict[str, Any]]:
     elif typ == "prompt":
         out["value"] = str(action.get("value", label))[:800]
     elif typ == "quote-update":
-        patch = action.get("patch")
-        if not isinstance(patch, dict) or not patch:
+        patch = _normalize_quote_patch(action.get("patch"))
+        if not patch:
             return None
-        out["patch"] = {str(k)[:80]: v for k, v in list(patch.items())[:30]}
+        out["patch"] = patch
     return out
 
 def _sanitize_result(data: Any) -> Dict[str, Any]:
@@ -289,12 +429,33 @@ def _chat_sync(payload: ChatPayload) -> Dict[str, Any]:
             response = _completion_for_model(client, model, conversation)
             text = response.choices[0].message.content or ""
             result = _sanitize_result(_extract_json(text))
+            has_quote_action = any(a.get("type") == "quote-update" for a in result.get("actions", []))
+            wants_quote_fill = _quote_fill_requested(payload)
+            if has_quote_action or wants_quote_fill:
+                try:
+                    extracted_patch = _extract_quote_patch_sync(client, model, payload)
+                except Exception as patch_exc:
+                    print(f"[ALF AI V4.2] quote extraction failed {model}: {repr(patch_exc)}", flush=True)
+                    extracted_patch = {}
+                existing_patch: Dict[str, Any] = {}
+                for action in result.get("actions", []):
+                    if action.get("type") == "quote-update": existing_patch.update(_normalize_quote_patch(action.get("patch")))
+                merged_patch = {**existing_patch, **extracted_patch}
+                if merged_patch:
+                    replaced=False; new_actions=[]
+                    for action in result.get("actions", []):
+                        if action.get("type") == "quote-update":
+                            if not replaced:
+                                new_actions.append({"label":action.get("label") or "Fill confirmed details","type":"quote-update","patch":merged_patch}); replaced=True
+                        else: new_actions.append(action)
+                    if wants_quote_fill and not replaced: new_actions.append({"label":"Fill confirmed details","type":"quote-update","patch":merged_patch})
+                    result["actions"] = new_actions[:6]
             result["_model"] = model
             return result
         except Exception as exc:
             message = str(exc).replace("\n", " ")[:260]
             errors.append(f"{model}: {message}")
-            print(f"[ALF AI V4.1] model failed {model}: {repr(exc)}", flush=True)
+            print(f"[ALF AI V4.2] model failed {model}: {repr(exc)}", flush=True)
 
     raise RuntimeError("All Groq models failed | " + " | ".join(errors[-3:]))
 
@@ -378,7 +539,7 @@ async def chat(payload: ChatPayload, request: Request):
     except asyncio.TimeoutError:
         return JSONResponse({"error":"AI timeout","service":SERVICE}, status_code=504)
     except Exception as exc:
-        print("[ALF AI V4.1] chat error:", repr(exc), flush=True)
+        print("[ALF AI V4.2] chat error:", repr(exc), flush=True)
         return JSONResponse({
             "error": str(exc)[:900],
             "service": SERVICE,
