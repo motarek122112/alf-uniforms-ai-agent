@@ -47,3 +47,10 @@ Validated with canonical security quote example:
 - Color: Blue
 - Sizes: S 20 / M 20 / L 10
 - Logo placement: chest and back
+
+## v4.3 Step 1 / confirmed-details reliability
+- Adds deterministic recovery of confirmed uniform category + total quantity from customer messages.
+- Keeps total quantity separate from size-breakdown numbers, so a confirmed 50-piece order is not replaced by S/M/L counts.
+- Recovers confirmed size labels from an assistant summary only when the next customer message explicitly confirms it.
+- Recovers industry, color and chest/back logo placement as a safety net when the LLM quote patch omits them.
+- The storefront V22.3 also independently enriches the quote patch before applying it to the form.

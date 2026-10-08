@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from groq import Groq
 
-SERVICE = "alf-uniforms-ai-agent-v4.2"
+SERVICE = "alf-uniforms-ai-agent-v4.3"
 
 def _first_env(*names: str) -> str:
     for name in names:
@@ -38,7 +38,7 @@ DEFAULT_MODEL_FALLBACKS = [
     "qwen/qwen3.8-27b",
 ]
 
-app = FastAPI(title="ALF Uniforms AI Agent", version="4.2.0")
+app = FastAPI(title="ALF Uniforms AI Agent", version="4.3.0")
 
 # Public storefront backend: API key is kept server-side, credentials are not accepted.
 # Allowing all browser origins removes stale-domain CORS failures when Shopify domain/theme changes.
@@ -287,6 +287,151 @@ def _normalize_quote_patch(patch: Any) -> Dict[str,Any]:
     allowed={"uniforms","company","industry","project","color","deadline","male_count","female_count","sizes","branding","logo_placement","logo_ready","branding_notes","name","phone","email","area","followup","contact_time","notes"}
     return {k:v for k,v in out.items() if k in allowed and v not in (None,"",[])}
 
+def _affirmative(text: str) -> bool:
+    return bool(re.match(r"^(?:yes|yeah|yep|ok|okay|correct|confirm(?:ed)?|prepare it|fill it|do it|اه|أه|ايوه|أيوه|تمام|صح|مظبوط|جهز(?:ها)?|حضر(?:ها)?|حضّر(?:ها)?|املا|املأ|عبي|عبّي)\b", str(text or "").strip(), re.I))
+
+
+def _quote_evidence(payload: ChatPayload) -> str:
+    msgs = payload.messages[-40:]
+    chunks: List[str] = []
+    for i, msg in enumerate(msgs):
+        content = str(msg.content or "")
+        if msg.role == "user":
+            chunks.append(content)
+        elif msg.role == "assistant" and i + 1 < len(msgs):
+            nxt = msgs[i + 1]
+            if nxt.role == "user" and _affirmative(str(nxt.content or "")):
+                chunks.append(content)
+    return "\n".join(chunks)
+
+
+def _quote_user_evidence(payload: ChatPayload) -> str:
+    return "\n".join(str(m.content or "") for m in payload.messages[-40:] if m.role == "user")
+
+
+def _explicit_quantity(text: str) -> int:
+    value = 0
+    patterns = [
+        r"(\d{2,4})\s*(?:pcs?|pieces?|uniforms?|sets?|قطعة|قطعه|قطعات|طقم|اطقم|أطقم|زي|زى)\b",
+        r"(?:qty|quantity|عدد|العدد|كمية|الكميه|الكمية)\s*[:=\-]?\s*(\d{2,4})\b",
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, text or "", re.I):
+            try:
+                n = int(m.group(1))
+                if n >= 12: value = n
+            except Exception:
+                pass
+    return value
+
+
+def _evidence_sizes(text: str) -> Dict[str, int]:
+    src = str(text or "").replace("\u00a0", " ").replace("\u202f", " ")
+    out: Dict[str, int] = {}
+    for label in ("XXL", "XL", "L", "M", "S"):
+        patterns = [
+            rf"(?:^|[\s,،;:]){label}\s*[:x=\-]?\s*(?:size|مقاس)?\s*(\d{{1,3}})(?=$|[\s,،;.!?])",
+            rf"(?:^|[\s,،;:])(\d{{1,3}})\s*(?:pcs?|pieces?|قطعة|قطعه)?\s*(?:size|مقاس)?\s*{label}(?=$|[\s,،;.!?])",
+        ]
+        found = None
+        for pat in patterns:
+            for m in re.finditer(pat, src, re.I):
+                try: found = max(0, int(m.group(1)))
+                except Exception: pass
+        if found is not None: out[label] = found
+    return out
+
+
+def _evidence_industry(text: str) -> str:
+    t = str(text or "").lower()
+    if re.search(r"security|guard|حراس|حراسة|امن|أمن", t): return "Security"
+    if re.search(r"restaurant|cafe|café|hospitality|مطعم|كافيه|مقهى|ضيافة", t): return "Restaurant / Café"
+    if re.search(r"event|promo|promotion|exhibition|فعالية|فعاليات|معرض|برومو", t): return "Events / Promotions"
+    if re.search(r"warehouse|maintenance|operations|logistics|service|مخزن|صيانة|تشغيل|لوجست", t): return "Service / Operations"
+    if re.search(r"retail|shop|store|متجر|محل", t): return "Retail"
+    if re.search(r"corporate|office|reception|sales team|شركة|مكتب|استقبال|مبيعات", t): return "Corporate Office"
+    return ""
+
+
+def _evidence_uniform(text: str, industry: str = "") -> str:
+    t = str(text or "")
+    # Strong product/category mentions first.
+    direct = _canonical_uniform_name(t)
+    if direct in ALLOWED_UNIFORM_NAMES:
+        return direct
+    mapping = {
+        "Security": "Security Uniforms",
+        "Restaurant / Café": "Chef Uniforms & Aprons",
+        "Service / Operations": "Cargo Pants & Workwear",
+        "Events / Promotions": "Event & Promo Team Apparel",
+        "Corporate Office": "Polo Shirts & T-Shirts",
+        "Retail": "Polo Shirts & T-Shirts",
+    }
+    return mapping.get(industry, "")
+
+
+def _evidence_color(text: str) -> str:
+    t = str(text or "").lower()
+    pairs = [
+        (r"navy|كحلي|كحلى", "Navy"), (r"blue|ازرق|أزرق", "Blue"),
+        (r"black|اسود|أسود", "Black"), (r"white|ابيض|أبيض", "White"),
+        (r"grey|gray|رمادي|رمادى", "Grey"), (r"beige|بيج", "Beige"),
+        (r"red|احمر|أحمر", "Red"), (r"green|اخضر|أخضر", "Green"),
+    ]
+    for pat, value in pairs:
+        if re.search(pat, t): return value
+    return ""
+
+
+def _evidence_logo_placement(text: str) -> str:
+    t = str(text or "").lower()
+    chest = bool(re.search(r"chest|صدر", t)); back = bool(re.search(r"back|ظهر", t)); sleeve = bool(re.search(r"sleeve|كم|الكم", t))
+    if chest and back: return "Chest and back"
+    if chest and sleeve: return "Chest and sleeve"
+    if back and sleeve: return "Back and sleeve"
+    if chest: return "Chest"
+    if back: return "Back"
+    if sleeve: return "Sleeve"
+    return ""
+
+
+def _augment_quote_patch_from_history(payload: ChatPayload, patch: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(_normalize_quote_patch(patch))
+    evidence = _quote_evidence(payload)
+    industry = out.get("industry") or _evidence_industry(evidence)
+    if industry and not out.get("industry"):
+        out["industry"] = industry
+
+    quantity = _explicit_quantity(_quote_user_evidence(payload))
+    uniform = ""
+    if out.get("uniforms"):
+        try: uniform = _canonical_uniform_name(out["uniforms"][0].get("name"))
+        except Exception: uniform = ""
+    if not uniform:
+        uniform = _evidence_uniform(evidence, industry)
+
+    if uniform:
+        uniforms = [dict(x) for x in out.get("uniforms", []) if isinstance(x, dict)]
+        if not uniforms:
+            uniforms = [{"name": uniform, "qty": quantity or 0}]
+        elif len(uniforms) == 1 and quantity >= 12 and int(uniforms[0].get("qty") or 0) < 12:
+            uniforms[0]["qty"] = quantity
+        out["uniforms"] = uniforms
+
+    if not out.get("color"):
+        color = _evidence_color(evidence)
+        if color: out["color"] = color
+    if not out.get("sizes"):
+        sizes = _evidence_sizes(evidence)
+        if sizes: out["sizes"] = sizes
+    if not out.get("logo_placement"):
+        placement = _evidence_logo_placement(evidence)
+        if placement: out["logo_placement"] = placement
+    if not out.get("project") and uniform and quantity >= 12:
+        out["project"] = f"{uniform} for {quantity} staff"
+    return _normalize_quote_patch(out)
+
+
 def _quote_fill_requested(payload: ChatPayload) -> bool:
     if not payload.messages: return False
     text=str(payload.messages[-1].content or "").strip().lower()
@@ -434,13 +579,14 @@ def _chat_sync(payload: ChatPayload) -> Dict[str, Any]:
             if has_quote_action or wants_quote_fill:
                 try:
                     extracted_patch = _extract_quote_patch_sync(client, model, payload)
+                    extracted_patch = _augment_quote_patch_from_history(payload, extracted_patch)
                 except Exception as patch_exc:
-                    print(f"[ALF AI V4.2] quote extraction failed {model}: {repr(patch_exc)}", flush=True)
+                    print(f"[ALF AI V4.3] quote extraction failed {model}: {repr(patch_exc)}", flush=True)
                     extracted_patch = {}
                 existing_patch: Dict[str, Any] = {}
                 for action in result.get("actions", []):
                     if action.get("type") == "quote-update": existing_patch.update(_normalize_quote_patch(action.get("patch")))
-                merged_patch = {**existing_patch, **extracted_patch}
+                merged_patch = _augment_quote_patch_from_history(payload, {**existing_patch, **extracted_patch})
                 if merged_patch:
                     replaced=False; new_actions=[]
                     for action in result.get("actions", []):
@@ -455,7 +601,7 @@ def _chat_sync(payload: ChatPayload) -> Dict[str, Any]:
         except Exception as exc:
             message = str(exc).replace("\n", " ")[:260]
             errors.append(f"{model}: {message}")
-            print(f"[ALF AI V4.2] model failed {model}: {repr(exc)}", flush=True)
+            print(f"[ALF AI V4.3] model failed {model}: {repr(exc)}", flush=True)
 
     raise RuntimeError("All Groq models failed | " + " | ".join(errors[-3:]))
 
@@ -539,7 +685,7 @@ async def chat(payload: ChatPayload, request: Request):
     except asyncio.TimeoutError:
         return JSONResponse({"error":"AI timeout","service":SERVICE}, status_code=504)
     except Exception as exc:
-        print("[ALF AI V4.2] chat error:", repr(exc), flush=True)
+        print("[ALF AI V4.3] chat error:", repr(exc), flush=True)
         return JSONResponse({
             "error": str(exc)[:900],
             "service": SERVICE,
